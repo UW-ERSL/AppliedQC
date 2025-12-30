@@ -1,4 +1,4 @@
-# Functions used in Chappter 8 on QFT
+# Functions used in Chapter 8 on QFT
 
 import numpy as np
 import matplotlib.pyplot as plt
