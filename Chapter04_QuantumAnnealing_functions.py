@@ -27,6 +27,295 @@ import neal
 from dwave.system import LeapHybridSampler, DWaveSampler, EmbeddingComposite
 
 
+import numpy as np
+import matplotlib.pyplot as plt
+from pyqubo import Binary, Array
+from dimod.reference.samplers import ExactSolver
+import neal
+
+class TrussQUBOOptimizer:
+    """
+    QUBO-based truss topology optimization using quantum annealing.
+    Combines QUBO formulation with FEM constraint evaluation.
+    """
+    
+    def __init__(self, fem_model, loads, fixed_dofs, 
+                 penalty_min_members=100.0,
+                 penalty_infeasible=1000.0):
+        """
+        Parameters:
+        -----------
+        fem_model : TrussFEM
+            Finite element model
+        loads : ndarray
+            Load vector
+        fixed_dofs : list
+            Fixed DOF indices
+        penalty_min_members : float
+            Penalty weight for minimum member constraint
+        penalty_infeasible : float
+            Penalty for FEM constraint violations
+        """
+        self.fem = fem_model
+        self.loads = loads
+        self.fixed_dofs = fixed_dofs
+        self.N = len(fem_model.elements)
+        self.penalty_min = penalty_min_members
+        self.penalty_infeas = penalty_infeasible
+        
+        # Precompute member lengths and weights
+        self.lengths = np.zeros(self.N)
+        for idx, (i, j) in enumerate(self.fem.elements):
+            dx = self.fem.nodes[j, 0] - self.fem.nodes[i, 0]
+            dy = self.fem.nodes[j, 1] - self.fem.nodes[i, 1]
+            self.lengths[idx] = np.sqrt(dx**2 + dy**2)
+        
+        self.weights = self.fem.rho * self.fem.A * self.lengths
+        
+    def build_qubo(self, target_members=None, adaptive_penalty=None):
+        """
+        Build QUBO Hamiltonian for truss optimization.
+        
+        H = Σ w_i * x_i + λ1 * (Σ x_i - M_min)^2 + λ2 * constraint_violations
+        
+        Parameters:
+        -----------
+        target_members : int, optional
+            Target number of members (for penalty tuning)
+        adaptive_penalty : dict, optional
+            Adaptive penalties based on previous iterations
+            
+        Returns:
+        --------
+        model : pyqubo model
+        x : Array of Binary variables
+        """
+        # Create binary variables for each potential member
+        x = Array.create('x', shape=self.N, vartype='BINARY')
+        
+        # Objective: minimize total weight
+        H_weight = sum(self.weights[i] * x[i] for i in range(self.N))
+        
+        # Constraint: minimum number of members
+        # For 2D truss: M_min = 2n - 3 where n is number of nodes
+        min_members = max(10, 2 * self.fem.n_nodes - 3)
+        if target_members is not None:
+            min_members = target_members
+        
+        # Penalty for deviation from minimum members
+        # (Σ x_i - M_min)^2 = Σ x_i^2 - 2*M_min*Σ x_i + M_min^2
+        # Since x_i^2 = x_i for binary: Σ x_i - 2*M_min*Σ x_i + constant
+        member_sum = sum(x[i] for i in range(self.N))
+        H_members = self.penalty_min * (member_sum - min_members)**2
+        
+        # Adaptive penalties from previous infeasible solutions
+        H_adaptive = 0
+        if adaptive_penalty is not None:
+            for idx, penalty in adaptive_penalty.items():
+                # Penalize members that caused violations
+                H_adaptive += penalty * (1 - x[idx])  # Encourage removal
+        
+        # Total Hamiltonian
+        H = H_weight + H_members + H_adaptive
+        
+        # Compile to BQM
+        model = H.compile()
+        
+        return model, x
+    
+    def evaluate_qubo_solution(self, sample, u_max=0.01, sigma_max=250e6):
+        """
+        Evaluate a QUBO solution using FEM.
+        
+        Parameters:
+        -----------
+        sample : dict
+            Binary solution from QUBO solver
+        u_max, sigma_max : float
+            Constraint limits
+            
+        Returns:
+        --------
+        metrics : dict
+            FEM evaluation results
+        design : ndarray
+            Design vector
+        """
+        # Extract design from sample
+        design = np.array([sample[f'x[{i}]'] for i in range(self.N)])
+        
+        # Evaluate with FEM
+        metrics = self.fem.evaluate_design(
+            design, self.loads, self.fixed_dofs,
+            u_max=u_max, sigma_max=sigma_max
+        )
+        
+        return metrics, design
+    
+    def solve_exact(self, u_max=0.01, sigma_max=250e6):
+        """
+        Solve using exact QUBO solver (only for small N < 20).
+        
+        Returns:
+        --------
+        best_design : ndarray
+            Optimal design found
+        best_metrics : dict
+            Performance metrics
+        all_results : list
+            All feasible solutions found
+        """
+        print(f"Building QUBO for {self.N} members...")
+        model, x = self.build_qubo()
+        bqm = model.to_bqm()
+        
+        print("Solving with ExactSolver...")
+        sampler = ExactSolver()
+        sampleset = sampler.sample(bqm)
+        
+        print(f"\nEvaluating {len(sampleset)} QUBO solutions with FEM...")
+        
+        best_weight = np.inf
+        best_design = None
+        best_metrics = None
+        all_results = []
+        
+        for i, (sample, energy) in enumerate(zip(sampleset.samples(), 
+                                                   sampleset.data(['energy']))):
+            metrics, design = self.evaluate_qubo_solution(sample, u_max, sigma_max)
+            
+            if metrics['feasible']:
+                all_results.append({
+                    'design': design.copy(),
+                    'metrics': metrics,
+                    'qubo_energy': energy
+                })
+                
+                if metrics['weight'] < best_weight:
+                    best_weight = metrics['weight']
+                    best_design = design.copy()
+                    best_metrics = metrics
+            
+            if (i + 1) % 100 == 0:
+                print(f"  Evaluated {i+1}/{len(sampleset)} solutions, "
+                      f"found {len(all_results)} feasible")
+        
+        print(f"\nFound {len(all_results)} feasible designs")
+        if best_design is not None:
+            print(f"Best design: {np.sum(best_design)} members, "
+                  f"weight = {best_weight:.2f} kg")
+        
+        return best_design, best_metrics, all_results
+    
+    def solve_annealing(self, num_reads=100, num_iterations=1, 
+                       u_max=0.01, sigma_max=250e6):
+        """
+        Solve using simulated annealing with iterative refinement.
+        
+        Parameters:
+        -----------
+        num_reads : int
+            Number of annealing runs per iteration
+        num_iterations : int
+            Number of refinement iterations
+        u_max, sigma_max : float
+            Constraint limits
+            
+        Returns:
+        --------
+        best_design : ndarray
+            Best design found
+        best_metrics : dict
+            Performance metrics
+        history : list
+            Optimization history
+        """
+        print(f"Solving with Simulated Annealing...")
+        print(f"  {num_iterations} iterations × {num_reads} reads/iteration\n")
+        
+        best_overall_design = None
+        best_overall_weight = np.inf
+        best_overall_metrics = None
+        history = []
+        
+        adaptive_penalty = None
+        
+        for iteration in range(num_iterations):
+            print(f"Iteration {iteration + 1}/{num_iterations}")
+            
+            # Build QUBO (with adaptive penalties if available)
+            model, x = self.build_qubo(adaptive_penalty=adaptive_penalty)
+            bqm = model.to_bqm()
+            
+            # Sample with simulated annealing
+            sampler = neal.SimulatedAnnealingSampler()
+            sampleset = sampler.sample(bqm, num_reads=num_reads)
+            
+            # Evaluate unique solutions
+            unique_samples = []
+            seen_designs = set()
+            
+            for sample in sampleset.samples():
+                design_tuple = tuple(sample[f'x[{i}]'] for i in range(self.N))
+                if design_tuple not in seen_designs:
+                    unique_samples.append(sample)
+                    seen_designs.add(design_tuple)
+            
+            print(f"  Evaluating {len(unique_samples)} unique solutions...")
+            
+            iteration_best_weight = np.inf
+            iteration_best_design = None
+            feasible_count = 0
+            
+            for sample in unique_samples:
+                metrics, design = self.evaluate_qubo_solution(sample, 
+                                                             u_max, sigma_max)
+                
+                if metrics['feasible']:
+                    feasible_count += 1
+                    
+                    if metrics['weight'] < iteration_best_weight:
+                        iteration_best_weight = metrics['weight']
+                        iteration_best_design = design.copy()
+                    
+                    if metrics['weight'] < best_overall_weight:
+                        best_overall_weight = metrics['weight']
+                        best_overall_design = design.copy()
+                        best_overall_metrics = metrics
+                        print(f"  ✓ New best: {np.sum(design)} members, "
+                              f"weight = {metrics['weight']:.2f} kg")
+            
+            print(f"  Found {feasible_count} feasible designs")
+            
+            history.append({
+                'iteration': iteration,
+                'feasible_count': feasible_count,
+                'best_weight': iteration_best_weight,
+                'best_design': iteration_best_design
+            })
+            
+            # Update adaptive penalties for next iteration
+            # (Simple strategy: penalize infeasible solutions)
+            if iteration < num_iterations - 1 and feasible_count < num_reads // 10:
+                print(f"  Low feasibility - adjusting penalties")
+                # This is a placeholder - more sophisticated strategies possible
+        
+        print(f"\n{'='*60}")
+        if best_overall_design is not None:
+            print(f"Best design found:")
+            print(f"  Members: {np.sum(best_overall_design)}")
+            print(f"  Weight: {best_overall_weight:.2f} kg")
+            print(f"  Max displacement: {best_overall_metrics['max_disp']*1000:.4f} mm")
+            print(f"  Max stress: {best_overall_metrics['max_stress']/1e6:.2f} MPa")
+            print(f"  Active members: {np.where(best_overall_design)[0].tolist()}")
+        else:
+            print("No feasible design found!")
+        print(f"{'='*60}\n")
+        
+        return best_overall_design, best_overall_metrics, history
+
+
+
 class QUBOBoxSolverClass:
 	"""
 	Adaptive Box Method for QUBO-based Linear System Solving
