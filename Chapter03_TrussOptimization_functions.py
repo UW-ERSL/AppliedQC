@@ -108,6 +108,10 @@ class TrussFEM:
         Solve equilibrium equations for given design.
         Automatically excludes hanging nodes (nodes with no connected members).
         
+        Validity Requirements:
+        - At least one element must connect to each force application node
+        - At least one element must connect to each fixed support node
+        
         Parameters:
         -----------
         design : array-like
@@ -124,7 +128,6 @@ class TrussFEM:
         valid : bool
             True if solution is valid (no singularity, constraints satisfied)
         """
-     
         
         # Identify connected nodes (nodes with at least one active member)
         connected_nodes = set()
@@ -132,6 +135,27 @@ class TrussFEM:
             if design[idx] == 1:
                 connected_nodes.add(i)
                 connected_nodes.add(j)
+        
+        # Condition 1: Check that force nodes have at least one connected element
+        force_nodes = set()
+        for dof_idx in range(len(loads)):
+            if loads[dof_idx] != 0:
+                node_id = dof_idx // 2
+                force_nodes.add(node_id)
+        
+        for force_node in force_nodes:
+            if force_node not in connected_nodes:
+                return np.zeros(self.n_dof), False
+        
+        # Condition 2: Check that each fixed node has at least one connected element
+        fixed_nodes = set()
+        for dof_idx in fixed_dofs:
+            node_id = dof_idx // 2
+            fixed_nodes.add(node_id)
+        
+        for fixed_node in fixed_nodes:
+            if fixed_node not in connected_nodes:
+                return np.zeros(self.n_dof), False
         
         # DOFs for connected nodes only
         connected_dofs = set()
@@ -173,7 +197,6 @@ class TrussFEM:
         # Hanging nodes and fixed nodes remain at zero displacement
         
         return u, True
-        
     def compute_stresses(self, design, u):
         """
         Compute member stresses from displacement solution.
@@ -219,7 +242,7 @@ class TrussFEM:
         return self.rho * self.A * np.sum(design * lengths)
     
     def evaluate_design(self, design, loads, fixed_dofs, 
-                   u_max=0.01, sigma_max=250e6):
+                   u_hat=0.01, sigma_hat=250e6):
         """
         Fully evaluate a design: solve FEM and check constraints.
         """
@@ -251,18 +274,36 @@ class TrussFEM:
         # Minimum members for connected structure: 2n - 3 (2D truss)
         min_members_required = max(1, 2 * n_connected - 3)
         
-        feasible = (max_disp <= u_max and 
-                max_stress <= sigma_max and
+        feasible = (max_disp <= u_hat and 
+                max_stress <= sigma_hat and
                 np.sum(design) >= min_members_required)
         
-        return {
+        metrics = {
             'weight': weight,
             'max_disp': max_disp,
             'max_stress': max_stress,
             'feasible': feasible,
             'compliance': compliance
         }
-    
+         
+        
+        return metrics
+
+    def print_metrics(self, metrics):
+        """
+        Print performance metrics in a formatted way.
+        
+        Parameters:
+        -----------
+        metrics : dict
+            Performance metrics dictionary
+        """
+        print(f"  Weight: {metrics['weight']:.2f} kg")
+        print(f"  Max displacement: {metrics['max_disp']*1000:.4f} mm")
+        print(f"  Max stress: {metrics['max_stress']/1e6:.2f} MPa")
+        print(f"  Compliance: {metrics['compliance']:.2f} J")
+        print(f"  Feasible: {metrics['feasible']}")
+
     def plot_truss(self, design=None, loads=None, fixed_dofs=None, 
                displacements=None, scale_factor=10, 
                show_nodes=True, show_labels=False,
@@ -349,7 +390,7 @@ class TrussFEM:
                 ax.plot(self.nodes[fixed_nodes, 0], 
                     self.nodes[fixed_nodes, 1], 
                     'ks', markersize=12, zorder=6, 
-                    label='Fixed supports', markerfacecolor='black')
+                    markerfacecolor='black')
         
         # Draw load arrows
         if loads is not None:
@@ -382,7 +423,7 @@ class TrussFEM:
                     ax.arrow(start_x, start_y, dx, dy,
                             head_width=0.15, head_length=0.1, 
                             fc='red', ec='red', linewidth=2.5, zorder=7,
-                            label='Applied load' if not load_drawn else '')
+                            )
                     load_drawn = True
                     
                     # Add load magnitude label (at start of arrow)
@@ -406,8 +447,7 @@ class TrussFEM:
         ax.set_title(title, fontsize=14, fontweight='bold')
         ax.axis('equal')
         ax.grid(True, alpha=0.3, linestyle='--')
-        ax.legend(loc='best', fontsize=10)
-        
+      
         plt.tight_layout()
         
         if save_path:
@@ -556,7 +596,7 @@ def search_design_space(fem_model, loads, fixed_dofs, N, M=10000, seed=None):
     if len(weights) == 0:
         print("\nWARNING: No feasible designs found! Try:")
         print("  - Increasing M (more samples)")
-        print("  - Relaxing constraints (u_max, sigma_max)")
+        print("  - Relaxing constraints (u_hat, sigma_hat)")
         print("  - Checking problem formulation")
         return [], [], [], []
     
@@ -654,7 +694,7 @@ def simulated_annealing(fem_model, loads, fixed_dofs, N,
         # Cool down
         T *= alpha
         
-        if iteration % 1000 == 0:
+        if iteration % 10000 == 0:
             print(f"Iteration {iteration}: T={T:.2f}, "
                   f"Best fitness={best_fitness:.2f}")
     

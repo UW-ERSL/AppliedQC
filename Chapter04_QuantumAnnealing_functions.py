@@ -123,7 +123,7 @@ class TrussQUBOOptimizer:
         
         return model, x
     
-    def evaluate_qubo_solution(self, sample, u_max=0.01, sigma_max=250e6):
+    def evaluate_qubo_solution(self, sample, u_hat=0.01, sigma_hat=250e6):
         """
         Evaluate a QUBO solution using FEM.
         
@@ -131,7 +131,7 @@ class TrussQUBOOptimizer:
         -----------
         sample : dict
             Binary solution from QUBO solver
-        u_max, sigma_max : float
+        u_hat, sigma_hat : float
             Constraint limits
             
         Returns:
@@ -147,12 +147,12 @@ class TrussQUBOOptimizer:
         # Evaluate with FEM
         metrics = self.fem.evaluate_design(
             design, self.loads, self.fixed_dofs,
-            u_max=u_max, sigma_max=sigma_max
+            u_hat=u_hat, sigma_hat=sigma_hat
         )
         
         return metrics, design
     
-    def solve_exact(self, u_max=0.01, sigma_max=250e6):
+    def solve_exact(self, u_hat=0.01, sigma_hat=250e6):
         """
         Solve using exact QUBO solver (only for small N < 20).
         
@@ -182,7 +182,7 @@ class TrussQUBOOptimizer:
         
         for i, (sample, energy) in enumerate(zip(sampleset.samples(), 
                                                    sampleset.data(['energy']))):
-            metrics, design = self.evaluate_qubo_solution(sample, u_max, sigma_max)
+            metrics, design = self.evaluate_qubo_solution(sample, u_hat, sigma_hat)
             
             if metrics['feasible']:
                 all_results.append({
@@ -208,7 +208,7 @@ class TrussQUBOOptimizer:
         return best_design, best_metrics, all_results
     
     def solve_annealing(self, num_reads=100, num_iterations=1, 
-                       u_max=0.01, sigma_max=250e6):
+                       u_hat=0.01, sigma_hat=250e6):
         """
         Solve using simulated annealing with iterative refinement.
         
@@ -218,7 +218,7 @@ class TrussQUBOOptimizer:
             Number of annealing runs per iteration
         num_iterations : int
             Number of refinement iterations
-        u_max, sigma_max : float
+        u_hat, sigma_hat : float
             Constraint limits
             
         Returns:
@@ -269,7 +269,7 @@ class TrussQUBOOptimizer:
             
             for sample in unique_samples:
                 metrics, design = self.evaluate_qubo_solution(sample, 
-                                                             u_max, sigma_max)
+                                                             u_hat, sigma_hat)
                 
                 if metrics['feasible']:
                     feasible_count += 1
@@ -581,3 +581,53 @@ class QUBOBoxSolverClass:
 			boxSuccess = False
 	
 		return [np.array(center),L,iteration,boxSuccess,nTranslations,nContractions,results]
+	
+
+class SimulatedQuantumAnnealing:
+    def __init__(self, Q, M=10, Gamma_init=1.0):
+        """
+        Q: QUBO matrix
+        M: Number of Trotter slices (imaginary time discretization)
+        Gamma_init: Initial transverse field strength
+        """
+        self.Q = Q
+        self.N = Q.shape[0]
+        self.M = M  # Trotter slices
+        self.Gamma = Gamma_init
+        
+    def transverse_field_energy(self, spins):
+        """Energy from transverse field (tunneling term)."""
+        # Coupling between adjacent Trotter slices
+        energy = 0
+        for m in range(self.M):
+            for i in range(self.N):
+                # Flip energy between slice m and m+1
+                if spins[m, i] != spins[(m+1) % self.M, i]:
+                    energy -= self.Gamma
+        return energy
+    
+    def problem_energy(self, spins):
+        """Classical QUBO energy."""
+        return sum(spins[m] @ self.Q @ spins[m] for m in range(self.M)) / self.M
+    
+    def anneal(self, steps=1000, beta_init=0.1, beta_final=10):
+        """Run SQA with annealing schedule."""
+        # Initialize M replicas
+        spins = np.random.choice([-1, 1], size=(self.M, self.N))
+        Gamma = self.Gamma
+        for step in range(steps):
+            # Anneal both temperature and transverse field
+            beta = beta_init + (beta_final - beta_init) * step / steps
+            Gamma = Gamma * (1 - step / steps)  # Decrease tunneling
+            
+            # Monte Carlo sweep
+            for m in range(self.M):
+                for i in range(self.N):
+                    # Propose spin flip
+                    delta_E = self._flip_energy(spins, m, i, Gamma)
+                    
+                    if delta_E < 0 or np.random.rand() < np.exp(-beta * delta_E):
+                        spins[m, i] *= -1
+        
+        # Return ground state from first Trotter slice
+        return (spins[0] + 1) // 2  # Convert to {0,1}
