@@ -12,6 +12,20 @@ import numpy as np
 from collections import defaultdict
 from qiskit import QuantumCircuit, transpile
 from qiskit_aer import Aer, StatevectorSimulator
+from Chapter06_QuantumGates_functions import simulateCircuit #type: ignore
+
+def ryMatrix(alpha):
+	return np.array([[np.cos(alpha/2), -np.sin(alpha/2)], [np.sin(alpha/2), np.cos(alpha/2)]])
+
+def rzMatrix(omega):
+	return np.array([[np.exp(-1j*omega/2), 0], [0, np.exp(1j*omega/2)]])
+
+# State preparation circuits (Hadamard = uniform superposition)
+def hadamards(n_qubits):
+    qc = QuantumCircuit(n_qubits)
+    for i in range(n_qubits):
+        qc.h(i)
+    return qc
 
 
 def hadamard_test_circuit(u, psi_prep, complex_test=False):
@@ -136,40 +150,6 @@ def woodbury_rank1_query(z_prep, b_prep, v_prep, u_prep, alpha, beta, shots, bac
     return zb - alpha * beta * vb / (1 + alpha * beta * vu) * zu
 
 
-def simulateCircuit(circuit, shots=1000):
-    """Use existing function from Chapter 6"""
-    from Chapter06_QuantumGates_functions import simulateCircuit as sim
-    return sim(circuit, shots)
-
-import numpy as np
-from qiskit import QuantumCircuit
 
 
-# Problem: (I + u*v^T)x = b, compute <z|x>
-n = 3  # 3 qubits = 8-dimensional vectors
 
-# State preparation circuits (Hadamard = uniform superposition)
-def hadamards(n_qubits):
-    qc = QuantumCircuit(n_qubits)
-    for i in range(n_qubits):
-        qc.h(i)
-    return qc
-
-z_prep = hadamards(n)  # Query vector |z>
-b_prep = hadamards(n)  # RHS |b>
-v_prep = hadamards(n)  # Update |v>
-u_prep = hadamards(n)  # Update |u>
-
-# Woodbury parameters
-alpha = 1.0
-beta = 1.0
-
-# Run quantum algorithm
-result = woodbury_rank1_query(
-    z_prep, b_prep, v_prep, u_prep, 
-    alpha, beta, 
-    shots=10000
-)
-
-print(f"Quantum result: {result:.4f}")
-print(f"Expected (analytical): 0.5000")  # For uniform states
