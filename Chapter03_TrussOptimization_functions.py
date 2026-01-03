@@ -192,12 +192,12 @@ class TrussFEM:
             return np.zeros(self.n_dof), False
         
         # Reconstruct full displacement vector
-        u = np.zeros(self.n_dof)
-        u[free_dofs] = u_free
+        d = np.zeros(self.n_dof)
+        d[free_dofs] = u_free
         # Hanging nodes and fixed nodes remain at zero displacement
         
-        return u, True
-    def compute_stresses(self, design, u):
+        return d, True
+    def compute_stresses(self, design, d):
         """
         Compute member stresses from displacement solution.
         
@@ -205,7 +205,7 @@ class TrussFEM:
         -----------
         design : array-like
             Binary array indicating active elements
-        u : ndarray
+        d : ndarray
             Displacement vector
             
         Returns:
@@ -226,15 +226,55 @@ class TrussFEM:
             c, s = dx/L, dy/L
             
             # Element displacements
-            u_elem = np.array([u[2*i], u[2*i+1], u[2*j], u[2*j+1]])
+            d_elem = np.array([d[2*i], d[2*i+1], d[2*j], d[2*j+1]])
             
             # Axial strain
-            epsilon = (1/L) * np.array([-c, -s, c, s]) @ u_elem
+            epsilon = (1/L) * np.array([-c, -s, c, s]) @ d_elem
             
             # Stress
             stresses[idx] = self.E * epsilon
         
         return stresses
+    
+    def compute_elem_strain_energies(self, design, d):
+        """
+        Compute member stresses from displacement solution.
+        
+        Parameters:
+        -----------
+        design : array-like
+            Binary array indicating active elements
+        d : ndarray
+            Displacement vector
+            
+        Returns:
+        --------
+        stresses : ndarray
+            Stress in each element (0 for inactive elements)
+        """
+        strainEnergy = np.zeros(len(self.elements))
+        
+        for idx, (i, j) in enumerate(self.elements):
+            if design[idx] == 0:
+                continue
+            
+            # Element geometry
+            dx = self.nodes[j, 0] - self.nodes[i, 0]
+            dy = self.nodes[j, 1] - self.nodes[i, 1]
+            L = np.sqrt(dx**2 + dy**2)
+            c, s = dx/L, dy/L
+            
+            # Element displacements
+            d_elem = np.array([d[2*i], d[2*i+1], d[2*j], d[2*j+1]])
+            
+            # Axial strain
+            epsilon = (1/L) * np.array([-c, -s, c, s]) @ d_elem
+            
+            # Stress
+            stress = self.E * epsilon
+            strainEnergy[idx] = 0.5 * stress * epsilon * self.A * L
+        
+        return strainEnergy
     
     def compute_weight(self, design):
         """Compute total weight of design."""
@@ -242,11 +282,11 @@ class TrussFEM:
         return self.rho * self.A * np.sum(design * lengths)
     
     def evaluate_design(self, design, loads, fixed_dofs, 
-                   u_hat=0.01, sigma_hat=250e6):
+                   d_hat=0.01, sigma_hat=250e6):
         """
         Fully evaluate a design: solve FEM and check constraints.
         """
-        u, valid = self.solve(design, loads, fixed_dofs)
+        d, valid = self.solve(design, loads, fixed_dofs)
         
         if not valid:
             return {
@@ -257,11 +297,11 @@ class TrussFEM:
                 'compliance': np.inf
             }
         
-        stresses = self.compute_stresses(design, u)
+        stresses = self.compute_stresses(design, d)
         weight = self.compute_weight(design)
-        max_disp = np.max(np.abs(u))
+        max_disp = np.max(np.abs(d))
         max_stress = np.max(np.abs(stresses))
-        compliance = loads @ u
+        compliance = loads @ d
         
         # Count connected nodes (nodes with at least one active member)
         connected_nodes = set()
@@ -274,7 +314,7 @@ class TrussFEM:
         # Minimum members for connected structure: 2n - 3 (2D truss)
         min_members_required = max(1, 2 * n_connected - 3)
         
-        feasible = (max_disp <= u_hat and 
+        feasible = (max_disp <= d_hat and 
                 max_stress <= sigma_hat and
                 np.sum(design) >= min_members_required)
         

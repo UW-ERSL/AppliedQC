@@ -36,7 +36,7 @@ from qiskit.visualization import plot_histogram
 from qiskit.circuit.library import UnitaryGate, MCXGate
 from qiskit.circuit.library.standard_gates.u import UGate
 from qiskit_aer import Aer
-from Chapter06_QuantumGates_functions import simulateCircuit #type: ignore
+from Chapter07_QuantumGates_functions import simulateCircuit #type: ignore
 from qiskit.circuit.library import PhaseOracle
 
 def bv_secret_circuit():
