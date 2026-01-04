@@ -2,8 +2,69 @@ import numpy as np
 import matplotlib.pyplot as plt
 import time
 
+
+def truss3x3():
+    # Example usage with the 3x3 truss
+    nodes = np.array([
+        [0.0, 0.0],   # Node 0 (bottom left) - FIXED
+        [2.0, 0.0],   # Node 1 (bottom center)
+        [4.0, 0.0],   # Node 2 (bottom right) - FIXED
+        [0.0, 1.5],   # Node 3 (middle left)
+        [2.0, 1.5],   # Node 4 (middle center)
+        [4.0, 1.5],   # Node 5 (middle right)
+        [0.0, 3.0],   # Node 6 (top left)
+        [2.0, 3.0],   # Node 7 (top center) - LOADED
+        [4.0, 3.0]    # Node 8 (top right)
+    ])
+
+    elements = [
+        (0, 1), (1, 2), (3, 4), (4, 5), (6, 7), (7, 8),  # Horizontal
+        (0, 3), (3, 6), (1, 4), (4, 7), (2, 5), (5, 8),  # Vertical
+        (0, 4), (1, 3), (1, 5), (2, 4), (3, 7), (4, 6), (4, 8), (5, 7),  # Diagonals
+        (0, 8), (2, 6), (0, 7), (1, 6), (1, 8), (2, 7)   # Long diagonals
+    ]
+
+    
+
+    # Define problem
+    fixed_dofs = [0, 1, 4, 5]  # Nodes 0 and 2 fixed
+    loads = np.zeros(2 * len(nodes))
+    loads[2*7 + 1] = -10000  # 10 kN downward at node 7
+
+    # Create FEM model
+    fem_model = TrussFEM(nodes, elements, loads, fixed_dofs, E=200e9, A=0.001, rho=7850)
+
+    return fem_model
+
+def truss2x2():
+    # Example usage with the 2x2 truss
+    nodes = np.array([
+        [0.0, 0.0],   # Node 0 (bottom left) - FIXED
+        [2.0, 0.0],   # Node 1 (bottom right) - FIXED
+        [0.0, 2.0],   # Node 2 (top left)
+        [2.0, 2.0]    # Node 3 (top right) - LOADED
+    ])
+
+    elements = [
+        (0, 1), (2, 3),  # Horizontal
+        (0, 2), (1, 3),  # Vertical
+        (0, 3), (1, 2)   # Diagonals
+    ]
+
+   
+
+    # Define problem
+    fixed_dofs = [0, 1, 2, 3]  # Nodes 0 and 1 fixed
+    loads = np.zeros(2 * len(nodes))
+    loads[2*3 + 1] = -10000  # 10 kN downward at node 3
+
+     # Create FEM model
+    fem_model = TrussFEM(nodes, elements, loads, fixed_dofs, E=200e9, A=0.001, rho=7850)
+
+    return fem_model
+
 class TrussFEM:
-    def __init__(self, nodes, elements, E=200e9, A=0.01, rho=7850):
+    def __init__(self, nodes, elements,loads, fixed_dofs, E=200e9, A=0.01, rho=7850):
         """
         Finite element model for 2D truss structures.
         
@@ -22,13 +83,37 @@ class TrussFEM:
         """
         self.nodes = np.array(nodes)
         self.elements = elements
+        self.n_elements = len(elements)
         self.E = E
-        self.A = A
+        self.loads = loads
+        self.fixed_dofs = fixed_dofs
+        # Allow A to be a scalar or array; convert to array of length n_elements
+        if np.isscalar(A):
+            self.A = np.full(self.n_elements, A)
+        else:
+            self.A = np.asarray(A)
+            if self.A.shape[0] != self.n_elements:
+                raise ValueError(" A must be a scalar or match number of elements")
         self.rho = rho
         self.n_nodes = len(nodes)
         self.n_dof = 2 * self.n_nodes
+        self.lengths = self.compute_all_lengths()
+        self.initial_weight = rho*np.sum(self.A * self.lengths)
+    
+    def compute_element_length(self, i, j): 
+        """Compute length of element between nodes i and j."""
+        dx = self.nodes[j, 0] - self.nodes[i, 0]
+        dy = self.nodes[j, 1] - self.nodes[i, 1]
+        return np.sqrt(dx**2 + dy**2)
+    
+    def compute_all_lengths(self):
+        """Compute all lengths."""
+        lengths = []
+        for idx, (i, j) in enumerate(self.elements):
+            lengths.append(self.compute_element_length(i, j))
+        return np.array(lengths)
         
-    def element_stiffness(self, i, j):
+    def element_stiffness(self, i, j, area):
         """
         Compute element stiffness matrix in global coordinates.
         
@@ -57,7 +142,7 @@ class TrussFEM:
         s = dy / L
         
         # Element stiffness in global coordinates
-        k = self.E * self.A / L
+        k = self.E * area / L
         K_elem = k * np.array([
             [ c*c,  c*s, -c*c, -c*s],
             [ c*s,  s*s, -c*s, -s*s],
@@ -65,16 +150,16 @@ class TrussFEM:
             [-c*s, -s*s,  c*s,  s*s]
         ])
         
-        return K_elem, L
+        return K_elem
     
-    def assemble_stiffness(self, design):
+    def assemble_stiffness(self, area=None):
         """
         Assemble global stiffness matrix.
         
         Parameters:
         -----------
-        design : array-like, shape (n_elements,)
-            Binary array: 1 if element is active, 0 otherwise
+        area : array-like, shape (n_elements,)
+            Cross-sectional areas for each element
             
         Returns:
         --------
@@ -84,15 +169,13 @@ class TrussFEM:
             Element lengths (for computing weight)
         """
         K = np.zeros((self.n_dof, self.n_dof))
-        lengths = np.zeros(len(self.elements))
+        
+        if area is None:
+            area = self.A
         
         for idx, (i, j) in enumerate(self.elements):
-            if design[idx] == 0:
-                continue  # Element not in design
-            
-            K_elem, L = self.element_stiffness(i, j)
-            lengths[idx] = L
-            
+            K_elem = self.element_stiffness(i, j, area[idx])
+     
             # Global DOF indices for this element
             dofs = [2*i, 2*i+1, 2*j, 2*j+1]
             
@@ -101,9 +184,9 @@ class TrussFEM:
                 for b in range(4):
                     K[dofs[a], dofs[b]] += K_elem[a, b]
         
-        return K, lengths
+        return K
     
-    def solve(self, design, loads, fixed_dofs):
+    def solve(self, area = None):
         """
         Solve equilibrium equations for given design.
         Automatically excludes hanging nodes (nodes with no connected members).
@@ -114,12 +197,12 @@ class TrussFEM:
         
         Parameters:
         -----------
-        design : array-like
-            Binary array indicating active elements
         loads : ndarray, shape (n_dof,)
             Applied loads at each DOF
         fixed_dofs : list
             Indices of constrained DOFs
+        area : array-like
+            Cross-sectional areas for each element
             
         Returns:
         --------
@@ -129,10 +212,15 @@ class TrussFEM:
             True if solution is valid (no singularity, constraints satisfied)
         """
         
+        if area is None:
+            area = self.A
+
+        loads = self.loads
+        fixed_dofs = self.fixed_dofs
         # Identify connected nodes (nodes with at least one active member)
         connected_nodes = set()
         for idx, (i, j) in enumerate(self.elements):
-            if design[idx] == 1:
+            if area[idx] > 0:
                 connected_nodes.add(i)
                 connected_nodes.add(j)
         
@@ -170,7 +258,7 @@ class TrussFEM:
             # No free DOFs means structure is either empty or fully constrained
             return np.zeros(self.n_dof), False
         
-        K, lengths = self.assemble_stiffness(design)
+        K = self.assemble_stiffness(area)
         # Extract free-free submatrix
         K_free = K[np.ix_(free_dofs, free_dofs)]
         f_free = loads[free_dofs]
@@ -197,14 +285,19 @@ class TrussFEM:
         # Hanging nodes and fixed nodes remain at zero displacement
         
         return d, True
-    def compute_stresses(self, design, d):
+    
+    def compute_compliance(self, area, displacements):
+        """Compute compliance."""
+        return displacements @ self.assemble_stiffness(area)[0] @ displacements
+    
+    def compute_stresses(self, area, displacements):
         """
         Compute member stresses from displacement solution.
         
         Parameters:
         -----------
-        design : array-like
-            Binary array indicating active elements
+        area : array-like
+            Cross-sectional areas for each element
         d : ndarray
             Displacement vector
             
@@ -214,9 +307,9 @@ class TrussFEM:
             Stress in each element (0 for inactive elements)
         """
         stresses = np.zeros(len(self.elements))
-        
+        d = displacements
         for idx, (i, j) in enumerate(self.elements):
-            if design[idx] == 0:
+            if area[idx] == 0:
                 continue
             
             # Element geometry
@@ -236,14 +329,14 @@ class TrussFEM:
         
         return stresses
     
-    def compute_elem_strain_energies(self, design, d):
+    def compute_elem_strain_energies(self, area, displacements):
         """
         Compute member stresses from displacement solution.
         
         Parameters:
         -----------
-        design : array-like
-            Binary array indicating active elements
+        area : array-like
+            Cross-sectional areas for each element
         d : ndarray
             Displacement vector
             
@@ -253,9 +346,9 @@ class TrussFEM:
             Stress in each element (0 for inactive elements)
         """
         strainEnergy = np.zeros(len(self.elements))
-        
+        d = displacements
         for idx, (i, j) in enumerate(self.elements):
-            if design[idx] == 0:
+            if area[idx] == 0:
                 continue
             
             # Element geometry
@@ -272,21 +365,24 @@ class TrussFEM:
             
             # Stress
             stress = self.E * epsilon
-            strainEnergy[idx] = 0.5 * stress * epsilon * self.A * L
+            strainEnergy[idx] = 0.5 * stress * epsilon * area[idx] * L
         
         return strainEnergy
     
-    def compute_weight(self, design):
+    def compute_weight(self, area):
         """Compute total weight of design."""
-        _, lengths = self.assemble_stiffness(design)
-        return self.rho * self.A * np.sum(design * lengths)
-    
-    def evaluate_design(self, design, loads, fixed_dofs, 
-                   d_hat=0.01, sigma_hat=250e6):
+        
+        return self.rho * np.sum(area * self.lengths)
+
+
+    def evaluate_design(self, area = None,desiredWeightFraction = 1,
+                   d_hat=np.inf, sigma_hat=np.inf):
         """
         Fully evaluate a design: solve FEM and check constraints.
         """
-        d, valid = self.solve(design, loads, fixed_dofs)
+        if area is None:
+            area = self.A
+        d, valid = self.solve(area)
         
         if not valid:
             return {
@@ -297,16 +393,17 @@ class TrussFEM:
                 'compliance': np.inf
             }
         
-        stresses = self.compute_stresses(design, d)
-        weight = self.compute_weight(design)
+        stresses = self.compute_stresses(area, d)
+        weight = self.compute_weight(area)
         max_disp = np.max(np.abs(d))
         max_stress = np.max(np.abs(stresses))
-        compliance = loads @ d
+        compliance = self.loads @ d
         
+        desiredWeight = desiredWeightFraction*self.initial_weight   
         # Count connected nodes (nodes with at least one active member)
         connected_nodes = set()
         for idx, (i, j) in enumerate(self.elements):
-            if design[idx] == 1:
+            if area[idx] > 0:
                 connected_nodes.add(i)
                 connected_nodes.add(j)
         n_connected = len(connected_nodes)
@@ -316,7 +413,8 @@ class TrussFEM:
         
         feasible = (max_disp <= d_hat and 
                 max_stress <= sigma_hat and
-                np.sum(design) >= min_members_required)
+                np.sum(area > 0) >= min_members_required and
+                weight <= desiredWeight)
         
         metrics = {
             'weight': weight,
@@ -344,8 +442,8 @@ class TrussFEM:
         print(f"  Compliance: {metrics['compliance']:.2f} J")
         print(f"  Feasible: {metrics['feasible']}")
 
-    def plot_truss(self, design=None, loads=None, fixed_dofs=None, 
-               displacements=None, scale_factor=10, 
+    def plot_truss(self, design=None, 
+               displacements=None,
                show_nodes=True, show_labels=False,
                title="Truss Structure", figsize=(12, 8),
                save_path=None):
@@ -356,14 +454,8 @@ class TrussFEM:
         -----------
         design : array-like, optional
             Binary array indicating active elements. If None, plot all elements.
-        loads : ndarray, optional
-            Load vector (for drawing load arrows)
-        fixed_dofs : list, optional
-            Fixed DOF indices (for marking supports)
         displacements : ndarray, optional
             Displacement vector (for plotting deformed shape)
-        scale_factor : float
-            Magnification factor for deformed shape visualization
         show_nodes : bool
             Whether to show node markers
         show_labels : bool
@@ -377,6 +469,7 @@ class TrussFEM:
         """
         fig, ax = plt.subplots(figsize=figsize)
         
+        scale_factor = 0.1/abs(displacements).max() if displacements is not None else 1.0
         # Determine which elements to plot
         if design is None:
             active_elements = np.ones(len(self.elements), dtype=bool)
@@ -419,9 +512,9 @@ class TrussFEM:
                 'o', color='lightgray', markersize=8, zorder=4)
         
         # Mark fixed supports
-        if fixed_dofs is not None:
+        if self.fixed_dofs is not None:
             fixed_nodes = set()
-            for dof in fixed_dofs:
+            for dof in self.fixed_dofs:
                 node_idx = dof // 2
                 fixed_nodes.add(node_idx)
             
@@ -433,14 +526,14 @@ class TrussFEM:
                     markerfacecolor='black')
         
         # Draw load arrows
-        if loads is not None:
+        if self.loads is not None:
             arrow_scale = 0.5  # Arrow length relative to structure size
-            max_load = np.max(np.abs(loads[loads != 0])) if np.any(loads != 0) else 1.0
+            max_load = np.max(np.abs(self.loads[self.loads != 0])) if np.any(self.loads != 0) else 1.0
             
             load_drawn = False
             for i in range(self.n_nodes):
-                fx = loads[2*i]
-                fy = loads[2*i+1]
+                fx = self.loads[2*i]
+                fy = self.loads[2*i+1]
                 
                 if abs(fx) > 1e-6 or abs(fy) > 1e-6:
                     # Compute arrow length (proportional to load magnitude)
@@ -496,249 +589,109 @@ class TrussFEM:
         
         plt.show()
 
-    
-
-
-def exhaustive_search(fem_model, loads, fixed_dofs, N):
-    """
-    Find optimal design by exhaustive enumeration.
-    
-    Parameters:
-    -----------
-    fem_model : TrussFEM
-        FEM model
-    loads, fixed_dofs : as before
-    N : int
-        Number of potential members
+    def random_search(self,M=10000, desiredWeightFraction=1.0, seed =None):
+        """
         
-    Returns:
-    --------
-    best_design : ndarray
-        Optimal design
-    best_metrics : dict
-        Performance metrics of optimal design
-    """
-    best_weight = np.inf
-    best_design = None
-    best_metrics = None
-    
-    n_designs = 2**N
-    print(f"Enumerating {n_designs} designs...")
-    
-    start_time = time.time()
-    
-    for i in range(n_designs):
-        # Convert integer i to binary design vector
-        design = np.array([int(b) for b in format(i, f'0{N}b')])
         
-        # Evaluate design
-        metrics = fem_model.evaluate_design(design, loads, fixed_dofs)
+        Parameters:
+        -----------
+        M : int
+            Number of random samples to evaluate (default 1000)
+        desiredWeightFraction : float
+            Desired fraction of the maximum weight (default 1.0)
+        seed : int, optional
+            Random seed for reproducibility
+            
+        Returns:
+        --------
+        weights, n_members, compliances, designs_evaluated : lists
+            Design space data for feasible designs
+        """
+        import time
         
-        # Update best if feasible and lighter
-        if metrics['feasible'] and metrics['weight'] < best_weight:
-            best_weight = metrics['weight']
-            best_design = design.copy()
-            best_metrics = metrics
-    
-    elapsed = time.time() - start_time
-    
-    print(f"Exhaustive search completed in {elapsed:.2f} seconds")
-    print(f"Evaluated {n_designs} designs")
-    print(f"Best weight: {best_weight:.2f}")
-    
-    return best_design, best_metrics
-
-def search_design_space(fem_model, loads, fixed_dofs, N, M=10000, seed=None):
-    """
-    
-    
-    Parameters:
-    -----------
-    fem_model : TrussFEM
-        Truss finite element model
-    loads : ndarray
-        Load vector
-    fixed_dofs : list
-        Fixed DOF indices
-    N : int
-        Number of potential members
-    M : int
-        Number of random samples to evaluate (default 1000)
-    seed : int, optional
-        Random seed for reproducibility
+        if seed is not None:
+            np.random.seed(seed)
         
-    Returns:
-    --------
-    weights, n_members, compliances, designs_evaluated : lists
-        Design space data for feasible designs
-    """
-    import time
-    
-    if seed is not None:
-        np.random.seed(seed)
-    
-    weights = []
-    n_members = []
-    compliances = []
-    designs_evaluated = []
-    
-    print(f"\nSampling {M:,} random designs from 2^{N} = {2**N:,} possible designs")
-    print(f"Sampling rate: {100*M/2**N:.4f}%\n")
-    
-    start_time = time.time()
-    
-    # Generate M random designs with varying member counts
-    # Use different probabilities to explore design space better
-    probabilities = [0.3, 0.5, 0.7]  # Sparse, medium, dense
-    samples_per_prob = M // len(probabilities)
-    
-    random_designs = []
-    for p in probabilities:
-        for _ in range(samples_per_prob):
-            design = (np.random.rand(N) < p).astype(int)
+        weights = []
+        n_members = []
+        compliances = []
+        designs_evaluated = []
+        
+        N = self.n_elements
+        print(f"\nSampling {M:,} random designs from 2^{N} = {2**N:,} possible designs")
+        print(f"Sampling rate: {100*M/2**N:.4f}%\n")
+        
+        start_time = time.time()
+        
+        # Generate M random designs with varying member counts
+        # Use different probabilities to explore design space better
+        probabilities = [0.3, 0.5, 0.7]  # Sparse, medium, dense
+        samples_per_prob = M // len(probabilities)
+        
+        random_designs = []
+        for p in probabilities:
+            for _ in range(samples_per_prob):
+                design = (np.random.rand(N) < p).astype(int)
+                random_designs.append(design)
+        
+        # Add remaining samples with uniform probability
+        for _ in range(M - len(random_designs)):
+            design = np.random.randint(0, 2, N)
             random_designs.append(design)
-    
-    # Add remaining samples with uniform probability
-    for _ in range(M - len(random_designs)):
-        design = np.random.randint(0, 2, N)
-        random_designs.append(design)
-    
-    # Evaluate all random designs with progress updates
-    print_interval = max(1, M // 10)  # Print every 10%
-    
-    for idx, design in enumerate(random_designs):
-        metrics = fem_model.evaluate_design(design, loads, fixed_dofs)
         
-        if metrics['feasible']:
-            weights.append(metrics['weight'])
-            n_members.append(np.sum(design))
-            compliances.append(metrics['compliance'])
-            designs_evaluated.append(design.copy())
+        # Evaluate all random designs with progress updates
+        print_interval = max(1, M // 10)  # Print every 10%
         
-        # Print progress
-        if (idx + 1) % print_interval == 0 or idx == M - 1:
-            elapsed = time.time() - start_time
-            percent = 100 * (idx + 1) / M
-            rate = (idx + 1) / elapsed
-            remaining = (M - idx - 1) / rate if rate > 0 else 0
+        for idx, design in enumerate(random_designs):
+            area = design*self.A  # Scale areas 
+            metrics = self.evaluate_design(area, desiredWeightFraction=desiredWeightFraction)
             
-            print(f"Progress: {percent:5.1f}% ({idx+1:,}/{M:,}) | "
-                  f"Elapsed: {elapsed:.1f}s | "
-                  f"Remaining: ~{remaining:.1f}s | "
-                  f"Feasible: {len(weights)}")
-    
-    elapsed = time.time() - start_time
-    
-    print(f"\nCompleted in {elapsed:.2f} seconds ({elapsed/M*1000:.2f} ms per design)")
-    print(f"Found {len(weights)} feasible designs out of {M:,} sampled")
-    print(f"Feasibility rate: {100*len(weights)/M:.2f}%")
-    
-    if len(weights) == 0:
-        print("\nWARNING: No feasible designs found! Try:")
-        print("  - Increasing M (more samples)")
-        print("  - Relaxing constraints (u_hat, sigma_hat)")
-        print("  - Checking problem formulation")
-        return [], [], [], []
-    
-    # Print statistics
-    print(f"\n{'='*70}")
-    print("Design Space Statistics:")
-    print(f"{'='*70}")
-    best_idx = weights.index(min(weights))
-  
-    
-    print(f"Best design:")
-    print(f"  Weight: {weights[best_idx]:.2f} kg")
-    print(f"  Members: {n_members[best_idx]}")
-    print(f"  Compliance: {compliances[best_idx]:.2f} J")
-    print(f"  Active members: {np.where(designs_evaluated[best_idx])[0].tolist()}")
-
-    best_design = designs_evaluated[weights.index(min(weights))]
-    return best_design
-
-
-def simulated_annealing(fem_model, loads, fixed_dofs, N,
-                       T_init=1000, T_min=0.1, alpha=0.95, 
-                       steps_per_temp=100):
-    """
-    Simulated annealing for truss optimization.
-    
-    Parameters:
-    -----------
-    T_init : float
-        Initial temperature
-    T_min : float
-        Minimum temperature (stopping criterion)
-    alpha : float
-        Cooling rate (T_new = alpha * T_old)
-    steps_per_temp : int
-        Number of iterations per temperature
-        
-    Returns:
-    --------
-    best_design : ndarray
-        Best design found
-    history : list
-        Evolution history for plotting
-    """
-    # Initialize with random design
-    current = np.random.randint(0, 2, N)
-    current_metrics = fem_model.evaluate_design(current, loads, fixed_dofs)
-    current_fitness = (current_metrics['weight'] if current_metrics['feasible']
-                      else current_metrics['weight'] + 1e6)
-    
-    best = current.copy()
-    best_fitness = current_fitness
-    
-    T = T_init
-    history = []
-    iteration = 0
-    
-    print(f"Starting SA: T_init={T_init}, T_min={T_min}, alpha={alpha}")
-    
-    while T > T_min:
-        for _ in range(steps_per_temp):
-            # Generate neighbor: flip random bit
-            neighbor = current.copy()
-            flip_idx = np.random.randint(0, N)
-            neighbor[flip_idx] = 1 - neighbor[flip_idx]
+            if metrics['feasible']:
+                weights.append(metrics['weight'])
+                n_members.append(np.sum(design))
+                compliances.append(metrics['compliance'])
+                designs_evaluated.append(design.copy())
             
-            # Evaluate neighbor
-            neighbor_metrics = fem_model.evaluate_design(neighbor, loads, 
-                                                        fixed_dofs)
-            neighbor_fitness = (neighbor_metrics['weight'] 
-                              if neighbor_metrics['feasible']
-                              else neighbor_metrics['weight'] + 1e6)
-            
-            # Acceptance criterion
-            delta = neighbor_fitness - current_fitness
-            
-            if delta < 0 or np.random.rand() < np.exp(-delta / T):
-                # Accept neighbor
-                current = neighbor
-                current_fitness = neighbor_fitness
+            # Print progress
+            if (idx + 1) % print_interval == 0 or idx == M - 1:
+                elapsed = time.time() - start_time
+                percent = 100 * (idx + 1) / M
+                rate = (idx + 1) / elapsed
+                remaining = (M - idx - 1) / rate if rate > 0 else 0
                 
-                # Update best
-                if current_fitness < best_fitness:
-                    best = current.copy()
-                    best_fitness = current_fitness
-            
-            history.append({
-                'iteration': iteration,
-                'temperature': T,
-                'current_fitness': current_fitness,
-                'best_fitness': best_fitness
-            })
-            iteration += 1
+                print(f"Progress: {percent:5.1f}% ({idx+1:,}/{M:,}) | "
+                    f"Elapsed: {elapsed:.1f}s | "
+                    f"Remaining: ~{remaining:.1f}s | "
+                    f"Feasible: {len(weights)}")
         
-        # Cool down
-        T *= alpha
+        elapsed = time.time() - start_time
         
-        if iteration % 10000 == 0:
-            print(f"Iteration {iteration}: T={T:.2f}, "
-                  f"Best fitness={best_fitness:.2f}")
+        print(f"\nCompleted in {elapsed:.2f} seconds ({elapsed/M*1000:.2f} ms per design)")
+        print(f"Found {len(weights)} feasible designs out of {M:,} sampled")
+        print(f"Feasibility rate: {100*len(weights)/M:.2f}%")
+        
+        if len(weights) == 0:
+            print("\nWARNING: No feasible designs found! Try:")
+            print("  - Increasing M (more samples)")
+            print("  - Relaxing constraints (u_hat, sigma_hat)")
+            print("  - Checking problem formulation")
+            return [], [], [], []
+        
+        # Print statistics
+        print(f"\n{'='*70}")
+        print("Design Space Statistics:")
+        print(f"{'='*70}")
+        best_idx = weights.index(min(weights))
     
-    print(f"\nSA completed after {iteration} iterations")
-    print(f"Best fitness: {best_fitness:.2f}")
-    
-    return best
+        
+        print(f"Best design:")
+        print(f"  Weight: {weights[best_idx]:.2f} kg")
+        print(f"  Members: {n_members[best_idx]}")
+        print(f"  Compliance: {compliances[best_idx]:.2f} J")
+        print(f"  Active members: {np.where(designs_evaluated[best_idx])[0].tolist()}")
+
+        best_design = designs_evaluated[weights.index(min(weights))]
+        return best_design
+
+
+
