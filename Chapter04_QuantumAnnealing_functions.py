@@ -132,7 +132,7 @@ class QATrussOptimizer:
         self.volume_history = []
         self.area_history = []
         self.iteration = 0
-        
+        self.earlyStop = False
     def update_fem_areas(self):
         """Update FEM model with current areas"""
         self.fem.set_area(self.A)
@@ -401,7 +401,7 @@ class QATrussOptimizer:
             
             iter_time = time.time() - iter_start
             
-            if iteration >= convergence_window:
+            if self.earlyStop and iteration >= convergence_window:
                 recent_obj = self.objective_history[-convergence_window:]
                 obj_change = abs(recent_obj[-1] - recent_obj[0]) / abs(recent_obj[0])
                 
