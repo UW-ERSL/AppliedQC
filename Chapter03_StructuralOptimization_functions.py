@@ -3,6 +3,7 @@ import matplotlib.pyplot as plt
 import time
 from scipy.sparse import coo_matrix, csr_matrix
 from scipy.sparse.linalg import spsolve
+from scipy.optimize import minimize
 
 
 
@@ -350,6 +351,79 @@ class TrussFEM:
         
         return np.sum(self.A * self.L)
 
+ 
+    # Add this method inside the TrussFEM class
+    def optimize_areas(self, volume_fraction=0.5, a_min=1e-6, a_max=None):
+        """
+        Optimizes element cross-sectional areas to minimize compliance.
+        
+        Parameters:
+        -----------
+        volume_fraction : float
+            Allowed volume as a fraction of the initial volume (0 to 1).
+        a_min : float
+            Lower bound for area to avoid numerical singularities.
+        a_max : float, optional
+            Upper bound for area. Defaults to the initial area.
+        """
+        if a_max is None:
+            a_max = np.max(self.A)
+        
+        # Target volume limit
+        max_volume = volume_fraction * self.initial_volume
+        n_elems = self.n_elements
+        
+        # 1. Define Objective Function (Compliance)
+        def objective(x):
+            self.set_area(x)
+            u, valid = self.solve()
+            if not valid:
+                return 1e20  # Return large penalty if system is unstable
+            
+            # Compliance c = f^T * u
+            compliance = self.loads @ u
+            
+            # 2. Compute Gradients (Sensitivities)
+            # dc/dA_e = -u_e^T * K_e_unit * u_e
+            # Which is equivalent to -(2 * StrainEnergy_e) / A_e
+            strain_energies = self.compute_elem_strain_energies(u)
+            grad = -2.0 * strain_energies / np.maximum(x, 1e-10)
+            
+            return compliance, grad
+
+        # 3. Define Constraints (Volume)
+        def volume_constraint(x):
+            # Must be >= 0 for SLSQP (max_vol - current_vol >= 0)
+            return max_volume - np.sum(x * self.L)
+
+        def volume_gradient(x):
+            return -self.L
+
+        # Constraint dictionary
+        cons = {'type': 'ineq', 'fun': volume_constraint, 'jac': volume_gradient}
+        
+        # 4. Bounds for A (to prevent elements from disappearing entirely)
+        bounds = [(a_min, a_max) for _ in range(n_elems)]
+        
+        # 5. Run Optimization
+        print(f"Starting optimization (Target Volume: {max_volume:.4f} m^3)...")
+        res = minimize(
+            fun=objective,
+            x0=self.A,
+            method='SLSQP',
+            jac=True,
+            bounds=bounds,
+            constraints=cons,
+            options={'ftol': 1e-9, 'disp': False, 'maxiter': 100}
+        )
+        
+        if res.success:
+            self.set_area(res.x)
+            print("Optimization successful.")
+        else:
+            print(f"Optimization failed: {res.message}")
+            
+        return res
 
     def evaluate_design(self, desiredVolumeFraction = 1,
                    d_hat=np.inf, sigma_hat=np.inf):

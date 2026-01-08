@@ -158,13 +158,16 @@ class QAOATrussOptimizer:
             # 2. Measurement (Sampling the best design)
             opt_qc = self.build_circuit(H_cost, self.optimal_params)
             if self.use_exact:
-                # OPTION A: EXACT (Statevector Amplitudes)
-                # Does not require a 'measure_all()' call
+                # Finds the bitstring with the absolute highest amplitude. 
+                # Zero statistical noise.  The result is perfectly deterministic.
+                # Memory usage doubles with every qubit added ($2^n$).
                 state = Statevector.from_instruction(opt_qc)
                 probs = state.probabilities_dict()
                 best_bitstring = max(probs, key=probs.get) 
             else:
-                # OPTION B: SAMPLING (Shot-based)
+                # Simulates many "shots" and finds the most frequent result.
+                # Noisy. Results may vary slightly between runs due to sampling noise.
+                # Can simulate systems up to ~30-40 qubits on classical hardware.
                 opt_qc.measure_all()
                 result = sampler.run([opt_qc]).result()
                 counts = result[0].data.meas.get_counts()
