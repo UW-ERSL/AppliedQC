@@ -634,114 +634,6 @@ class TrussFEM:
         
         plt.show()
 
-    def random_search(self,M=10000, desiredVolumeFraction=1.0, seed =None):
-        """
-        
-        
-        Parameters:
-        -----------
-        M : int
-            Number of random samples to evaluate (default 1000)
-        desiredVolumeFraction : float
-            Desired fraction of the maximum volume (default 1.0)
-        seed : int, optional
-            Random seed for reproducibility
-            
-        Returns:
-        --------
-        volumes, n_members, compliances, designs_evaluated : lists
-            Design space data for feasible designs
-        """
-        import time
-        
-        if seed is not None:
-            np.random.seed(seed)
-        
-        volumes = []
-        n_members = []
-        compliances = []
-        designs_evaluated = []
-        
-        N = self.n_elements
-        print(f"\nSampling {M:,} random designs from 2^{N} = {2**N:,} possible designs")
-        print(f"Sampling rate: {100*M/2**N:.4f}%\n")
-        
-        start_time = time.time()
-        
-        # Generate M random designs with varying member counts
-        # Use different probabilities to explore design space better
-        probabilities = [0.1, 0.5, 0.9]  # Sparse, medium, dense
-        samples_per_prob = M // len(probabilities)
-        
-        random_designs = []
-        for p in probabilities:
-            for _ in range(samples_per_prob):
-                design = (np.random.rand(N) < p).astype(int)
-                random_designs.append(design)
-        
-        # Add remaining samples with uniform probability
-        for _ in range(M - len(random_designs)):
-            design = np.random.randint(0, 2, N)
-            random_designs.append(design)
-        
-        # Evaluate all random designs with progress updates
-        print_interval = max(1, M // 10)  # Print every 10%
-        
-        area0 = self.A.copy()  # Store original area
-       
-        for idx, design in enumerate(random_designs):
-            self.set_area(area0)  # Reset to original area
-            self.set_area(design*area0)
-            metrics = self.evaluate_design(desiredVolumeFraction=desiredVolumeFraction)
-            
-            if metrics['feasible']:
-                volumes.append(metrics['volume'])
-                n_members.append(np.sum(design))
-                compliances.append(metrics['compliance'])
-                designs_evaluated.append(design.copy())
-            
-            # Print progress
-            if (idx + 1) % print_interval == 0 or idx == M - 1:
-                elapsed = time.time() - start_time
-                percent = 100 * (idx + 1) / M
-                rate = (idx + 1) / elapsed
-                remaining = (M - idx - 1) / rate if rate > 0 else 0
-                
-                print(f"Progress: {percent:5.1f}% ({idx+1:,}/{M:,}) | "
-                    f"Elapsed: {elapsed:.1f}s | "
-                    f"Remaining: ~{remaining:.1f}s | "
-                    f"Feasible: {len(volumes)}")
-        
-        elapsed = time.time() - start_time
-        
-        print(f"\nCompleted in {elapsed:.2f} seconds ({elapsed/M*1000:.2f} ms per design)")
-        print(f"Found {len(volumes)} feasible designs out of {M:,} sampled")
-        print(f"Feasibility rate: {100*len(volumes)/M:.2f}%")
-        
-        if len(volumes) == 0:
-            print("\nWARNING: No feasible designs found! Try:")
-            print("  - Increasing M (more samples)")
-            print("  - Relaxing constraints (u_hat, sigma_hat)")
-            print("  - Checking problem formulation")
-            return [], [], [], []
-        
-        # Print statistics
-        print(f"\n{'='*70}")
-        print("Design Space Statistics:")
-        print(f"{'='*70}")
-        best_idx = volumes.index(min(volumes))
-    
-        
-        print(f"Best design:")
-        print(f"  Volume: {volumes[best_idx]:.2f} m^3")
-        print(f"  Members: {n_members[best_idx]}")
-        print(f"  Compliance: {compliances[best_idx]:.2f} J")
-        print(f"  Active members: {np.where(designs_evaluated[best_idx])[0].tolist()}")
-
-        best_design = designs_evaluated[volumes.index(min(volumes))]
-        return best_design
-
-
 class PlaneStressFEM:
     """
     2D Plane Stress FEM for rectangular grid mesh
@@ -772,8 +664,8 @@ class PlaneStressFEM:
         t : float
             Thickness (for plane stress)
         """
-        self.nx = nx
-        self.ny = ny
+        self.nelx = nx
+        self.nely = ny
         self.lx = lx
         self.ly = ly
         self.E = E
@@ -843,9 +735,9 @@ class PlaneStressFEM:
         """
         connectivity = np.zeros((self.n_elements, 4), dtype=int)
         
-        for ely in range(self.ny):
-            for elx in range(self.nx):
-                elem_id = ely * self.nx + elx
+        for ely in range(self.nely):
+            for elx in range(self.nelx):
+                elem_id = ely * self.nelx + elx
                 
                 # Bottom-left node
                 n0 = ely * self.n_nodes_x + elx
@@ -930,9 +822,9 @@ class PlaneStressFEM:
         
         return Ke
     
-    def set_densities(self, rho):
+    def set_xi(self, xi):
         """Set element densities (design variables)"""
-        self.xi = np.clip(rho, self.xi_min, 1.0)
+        self.xi = np.clip(xi, self.xi_min, 1.0)
     
     def apply_boundary_condition(self, node_ids, dof_x=True, dof_y=True):
         """
@@ -983,7 +875,7 @@ class PlaneStressFEM:
                 elem_dofs[2*i]   = 2*node      # x-displacement
                 elem_dofs[2*i+1] = 2*node + 1  # y-displacement
             
-            # SIMP interpolation: E_e = E_min + (E_0 - E_min) * rho^p
+            # SIMP interpolation: E_e = E_min + (E_0 - E_min) * xi^p
             density_factor = self.xi[elem] ** self.penal
             
             # Scaled element stiffness
@@ -1094,9 +986,9 @@ class PlaneStressFEM:
             fig, ax = plt.subplots(figsize=(10, 4))
         
         # Reshape densities to 2D grid
-        rho_grid = self.xi.reshape((self.ny, self.nx))
+        xi_grid = self.xi.reshape((self.nely, self.nelx))
         
-        im = ax.imshow(rho_grid, cmap=cmap, origin='lower', 
+        im = ax.imshow(xi_grid, cmap=cmap, origin='lower', 
                       extent=[0, self.lx, 0, self.ly],
                       vmin=0, vmax=1, interpolation='none')
         ax.set_xlabel('x')
@@ -1123,9 +1015,8 @@ class PlaneStressFEM:
             y = np.append(y, y[0])
             ax.plot(x, y, 'k-', linewidth=1.5)
 
-        # Plot nodes
-        ax.plot(self.node_coords[:, 0], self.node_coords[:, 1], 'o', color='gray', markersize=4, zorder=3)
-
+       
+        
         # Plot boundary conditions (fixed DOFs)
         if show_bc and self.fixed_dofs:
             fixed_nodes = set([dof // 2 for dof in self.fixed_dofs])
@@ -1199,6 +1090,134 @@ class PlaneStressFEM:
         
         return ax
 
+
+class TopOptOC:
+    """
+    Optimality Criteria (OC) optimizer compatible with PlaneStressFEM.
+    """
+    
+    def __init__(self, fea, volume_fraction, filter_radius=1.5, 
+                 move_limit=0.2, max_iter=100, tol=0.01):
+        self.fea = fea
+        self.vf = volume_fraction
+        self.rmin = filter_radius
+        self.move = move_limit
+        self.max_iter = max_iter
+        self.tol = tol
+        
+        # Initialize with uniform density at target volume fraction
+        self.fea.set_xi(np.ones(fea.n_elements) * volume_fraction)
+        
+        # Prepare filter weights based on unit element coordinates
+        self._prepare_filter()
+        
+        self.history = {'iteration': [], 'compliance': [], 'volume_fraction': [], 'change': []}
+    
+    def _prepare_filter(self):
+        """Prepare sensitivity filter weights assuming unit-sized elements."""
+        nelx, nely = self.fea.nelx, self.fea.nely
+        self.H = np.zeros((self.fea.n_elements, self.fea.n_elements))
+        
+        for e1 in range(self.fea.n_elements):
+            ely1, elx1 = divmod(e1, nelx)
+            cx1, cy1 = elx1 + 0.5, ely1 + 0.5
+            
+            # Find neighbors within radius rmin
+            i_min, i_max = int(max(elx1 - self.rmin, 0)), int(min(elx1 + self.rmin + 1, nelx))
+            j_min, j_max = int(max(ely1 - self.rmin, 0)), int(min(ely1 + self.rmin + 1, nely))
+            
+            for ely2 in range(j_min, j_max):
+                for elx2 in range(i_min, i_max):
+                    e2 = ely2 * nelx + elx2
+                    dist = np.sqrt((elx1 - elx2)**2 + (ely1 - ely2)**2)
+                    if dist < self.rmin:
+                        self.H[e1, e2] = self.rmin - dist
+        
+        self.Hs = np.sum(self.H, axis=1)
+
+    def _compute_sensitivities(self):
+        """Compute compliance sensitivities dC/dxi."""
+        dc = np.zeros(self.fea.n_elements)
+        p = 3.0  # SIMP penalty
+        ke = self.fea.Ke
+        u = self.fea.displacements
+        elem_dofs = np.zeros(8, dtype=int)
+        for e in range(self.fea.n_elements):
+            # Map element displacements using the edof matrix
+            nodes = self.fea.connectivity[e]
+            
+            # Element DOFs (8 DOFs: 2 per node)
+            for i, node in enumerate(nodes):
+                elem_dofs[2*i]   = 2*node      # x-displacement
+                elem_dofs[2*i+1] = 2*node + 1  # y-displacement
+            u_e = u[elem_dofs]
+            strain_energy = u_e.T @ ke @ u_e
+            
+            # Sensitivity formula: -p * xi^(p-1) * u^T * ke * u
+            dc[e] = -p * (self.fea.xi[e]**(p - 1)) * strain_energy
+            
+        return dc
+
+    def _filter_sensitivities(self, dc):
+        """Apply density-based sensitivity filter."""
+        # Standard sensitivity filter: (H * (xi * dc)) / (xi * Hs)
+        dc_filtered = (self.H @ (self.fea.xi * dc)) / (self.fea.xi * self.Hs)
+        return dc_filtered
+
+    def _oc_update(self, dc):
+        """Optimality Criteria update step with bisection for Lagrange multiplier."""
+        l1, l2 = 0, 1e9
+        xi_old = self.fea.xi.copy()
+        
+        while (l2 - l1) / (l1 + l2) > 1e-3:
+            lmid = 0.5 * (l2 + l1)
+            # OC update rule with move limits and physical bounds [0, 1]
+            xi_new = np.maximum(0.001, # Avoid zero for numerical stability
+                     np.maximum(xi_old - self.move,
+                     np.minimum(1.0,
+                     np.minimum(xi_old + self.move,
+                                xi_old * np.sqrt(-dc / lmid)))))
+            
+            # Check volume constraint (average density)
+            if np.mean(xi_new) > self.vf:
+                l1 = lmid
+            else:
+                l2 = lmid
+        return xi_new
+
+    def optimize(self, verbose=True):
+        if verbose:
+            print(f"Starting OC Optimization: Target VF={self.vf}, Filter R={self.rmin}")
+
+        for it in range(self.max_iter):
+            # 1. FEA Solve
+            self.fea.solve()
+            
+            # 2. Get Metrics and Sensitivities
+            metrics = self.fea.evaluate_design()
+            dc = self._compute_sensitivities()
+            
+            # 3. Filter and Update
+            dc_filtered = self._filter_sensitivities(dc)
+            xi_old = self.fea.xi.copy()
+            xi_new = self._oc_update(dc_filtered)
+            
+            # 4. Update FEM state
+            self.fea.set_xi(xi_new)
+            
+            # 5. Convergence check
+            change = np.max(np.abs(xi_new - xi_old))
+            self.history['iteration'].append(it)
+            self.history['compliance'].append(metrics['compliance'])
+            self.history['volume_fraction'].append(metrics['volume_fraction'])
+            self.history['change'].append(change)
+
+            if verbose and it % 5 == 0:
+                print(f"Iter {it:3d}: Compliance={metrics['compliance']:.4g}, volume_fraction={metrics['volume_fraction']:.4f}, Change={change:.4f}")
+
+            
+        
+        return self.history
 
 """
 Examples of truss problems
