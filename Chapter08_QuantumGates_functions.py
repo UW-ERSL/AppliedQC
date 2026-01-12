@@ -34,11 +34,11 @@ from qiskit_ibm_runtime import QiskitRuntimeService
 from qiskit_ibm_runtime import SamplerV2 as Sampler
 from qiskit.transpiler.preset_passmanagers import generate_preset_pass_manager
 
-def simulateCircuit(circuit, shots=1000):
+def simulateCircuit(circuit, method = 'matrix_product_state', shots=1000):
     """
     Simulate a quantum circuit using Qiskit Aer simulator.
     
-    Simulates quantum circuit evolution classically using statevector method.
+    Simulates quantum circuit evolution classically using specified simulation method.
     Note: Classical simulation has exponential cost O(2^n) in both time and memory,
     where n is the number of qubits. This limits practical simulation to ~30-40 qubits.
     
@@ -46,6 +46,9 @@ def simulateCircuit(circuit, shots=1000):
     ----------
     circuit : QuantumCircuit
         The quantum circuit to simulate
+    method : str, optional
+        Simulation method to use (default: 'matrix_product_state')
+        Other options: 'statevector', 'density_matrix', 'stabilizer', etc.
     shots : int, optional
         Number of measurement shots (default: 1000)
         More shots reduce statistical error: uncertainty ~ 1/sqrt(shots)
@@ -72,7 +75,7 @@ def simulateCircuit(circuit, shots=1000):
     >>> print(counts)
     {'0': ~500, '1': ~500}  # Equal superposition: |0⟩ + |1⟩ → 50/50 probability
     """
-    backend = Aer.get_backend('qasm_simulator')
+    backend = Aer.get_backend('qasm_simulator', method=method)
     transpiled_circuit = transpile(circuit, backend)
     job = backend.run(transpiled_circuit, shots=shots)
     counts = job.result().get_counts(circuit)

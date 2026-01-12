@@ -44,7 +44,7 @@ import matplotlib.pyplot as plt
 from qiskit import QuantumCircuit, QuantumRegister, ClassicalRegister
 from qiskit.quantum_info import Statevector
 from qiskit.circuit.library import QFTGate
-from Chapter07_QuantumGates_functions import simulateCircuit
+from Chapter08_QuantumGates_functions import simulateCircuit
 from qiskit.circuit.library import QFT, phase_estimation, HamiltonianGate
 
 def myQPESingleBit(A,v,lambdaUpper,nShots=1000):

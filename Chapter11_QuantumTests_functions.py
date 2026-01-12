@@ -12,7 +12,8 @@ import numpy as np
 from collections import defaultdict
 from qiskit import QuantumCircuit, transpile
 from qiskit_aer import Aer, StatevectorSimulator
-from Chapter06_QuantumGates_functions import simulateCircuit #type: ignore
+from qiskit import QuantumCircuit, QuantumRegister, ClassicalRegister, transpile
+from Chapter08_QuantumGates_functions import simulateCircuit #type: ignore
 
 def ryMatrix(alpha):
 	return np.array([[np.cos(alpha/2), -np.sin(alpha/2)], [np.sin(alpha/2), np.cos(alpha/2)]])
@@ -149,6 +150,54 @@ def woodbury_rank1_query(z_prep, b_prep, v_prep, u_prep, alpha, beta, shots, bac
     # Woodbury formula
     return zb - alpha * beta * vb / (1 + alpha * beta * vu) * zu
 
+def inner_product_estimation(se_unit_vector, test_unit_vector, shots = 10000):
+    """
+    Estimate |<s|x>|^2 using Hadamard test.
+    
+    Parameters
+    ----------
+    se_unit_vector : array
+        State |s> vector
+    test_unit_vector : array
+        Test |x> bitstring
+    shots : int
+        Measurement shots
+    backend : Backend, optional
+        Quantum backend
+    
+    Returns
+    -------
+    float
+        Estimated |<s|x>|^2
+    """
+    # --- 2. Circuit Setup ---
+    num_data_qubits = int(np.log2(len(se_unit_vector))) # log2(32) = 5
+    q_aux = QuantumRegister(1, 'aux')
+    q_psi = QuantumRegister(num_data_qubits, 'sens')
+    q_phi = QuantumRegister(num_data_qubits, 'design')
+    c_res = ClassicalRegister(1, 'm')
+
+     # Build circuit
+    qc = QuantumCircuit(q_aux, q_psi, q_phi, c_res)
+    qc.initialize(se_unit_vector, q_psi)
+    qc.initialize(test_unit_vector, q_phi)
+
+    qc.barrier()
+
+    qc.h(q_aux[0])
+    for i in range(num_data_qubits):
+        qc.cswap(q_aux[0], q_psi[i], q_phi[i])
+    qc.h(q_aux[0])
+
+    qc.measure(q_aux, c_res)
+    # Simulate circuit
+    counts = simulateCircuit(qc, shots)
+    
+    # Calculate |<s|x>|^2
+    p0 = counts.get('0', 0) / shots
+    overlap_squared = max(0, 2 * p0 - 1)
+    
+    return overlap_squared
 
 
 

@@ -351,8 +351,7 @@ class TrussFEM:
         
         return np.sum(self.A * self.L)
 
- 
-    # Add this method inside the TrussFEM class
+
     def optimize_areas(self, volume_fraction=0.5, a_min=1e-6, a_max=None):
         """
         Optimizes element cross-sectional areas to minimize compliance.
@@ -649,7 +648,7 @@ class PlaneStressFEM:
         0---1
     """
     
-    def __init__(self, nx, ny, lx=1.0, ly=1.0, E=1.0, nu=0.3, t=1.0):
+    def __init__(self, nx, ny, lx=1.0, ly=1.0, E=200e9, nu=0.3, t=0.1):
         """
         Parameters:
         -----------
@@ -706,6 +705,7 @@ class PlaneStressFEM:
         # Solution
         self.displacements = None  # Global displacement vector
         self.compliance = None
+        self.title = "Plane Stress FEM Model"
     
     def _generate_node_coordinates(self):
         """Generate coordinates for all nodes"""
@@ -906,6 +906,7 @@ class PlaneStressFEM:
             Whether solution succeeded
         """
         # Assemble global stiffness
+     
         K = self.assemble_global_stiffness()
         
         # Free DOFs
@@ -959,6 +960,30 @@ class PlaneStressFEM:
         
         return strain_energy
     
+    def compute_elem_strain_energies(self):
+        se = np.zeros(self.n_elements)
+        ke = self.Ke
+        u = self.displacements
+        elem_dofs = np.zeros(8, dtype=int)
+        for e in range(self.n_elements):
+            # Map element displacements using the edof matrix
+            nodes = self.connectivity[e]
+            
+            # Element DOFs (8 DOFs: 2 per node)
+            for i, node in enumerate(nodes):
+                elem_dofs[2*i]   = 2*node      # x-displacement
+                elem_dofs[2*i+1] = 2*node + 1  # y-displacement
+            u_e = u[elem_dofs]
+            se[e] = u_e.T @ ke @ u_e
+            
+        return se
+    def get_compliance(self):
+        """Get current compliance"""
+        if self.compliance is None:
+            raise RuntimeError("Must solve first!")
+        
+        return self.compliance
+    
     def evaluate_design(self):
         """Evaluate current design"""
         volume = np.sum(self.xi) * self.elem_width * self.elem_height * self.t
@@ -979,33 +1004,14 @@ class PlaneStressFEM:
         print(f"  Volume fraction: {metrics['volume_fraction']:.4f}")
         print(f"  Feasible: {metrics['feasible']}")
 
-
-    def plot_density(self, title="Design", cmap='gray_r', ax=None):
-        """Plot element densities"""
-        if ax is None:
-            fig, ax = plt.subplots(figsize=(10, 4))
-        
-        # Reshape densities to 2D grid
-        xi_grid = self.xi.reshape((self.nely, self.nelx))
-        
-        im = ax.imshow(xi_grid, cmap=cmap, origin='lower', 
-                      extent=[0, self.lx, 0, self.ly],
-                      vmin=0, vmax=1, interpolation='none')
-        ax.set_xlabel('x')
-        ax.set_ylabel('y')
-        ax.set_title(title)
-        ax.set_aspect('equal')
-        
-        plt.colorbar(im, ax=ax, label='Density')
-        
-        return ax
-    
-    def plot_mesh(self, show_bc=True, show_loads=True, ax=None, title="Mesh with BCs and Loads"):
+    def plot_mesh(self, show_bc=True, show_loads=True, ax=None):
         """Plot the mesh, boundary conditions, and loads (undeformed)"""
         if ax is None:
             fig, ax = plt.subplots(figsize=(10, 4))
 
         # Plot elements
+
+        min_xi_less_than_one = np.any(np.min(self.xi) < 1)
         for elem in range(self.n_elements):
             nodes = self.connectivity[elem]
             x = self.node_coords[nodes, 0]
@@ -1013,10 +1019,12 @@ class PlaneStressFEM:
             # Close the loop
             x = np.append(x, x[0])
             y = np.append(y, y[0])
-            ax.plot(x, y, 'k-', linewidth=1.5)
+            ax.plot(x, y, 'k-', linewidth=0.5)
+            # Fill element with color based on density xi
+            if (min_xi_less_than_one):
+                color = plt.cm.gray_r(self.xi[elem])
+                ax.fill(x, y, color=color, alpha=0.7, edgecolor=None)
 
-       
-        
         # Plot boundary conditions (fixed DOFs)
         if show_bc and self.fixed_dofs:
             fixed_nodes = set([dof // 2 for dof in self.fixed_dofs])
@@ -1050,11 +1058,11 @@ class PlaneStressFEM:
 
         ax.set_xlabel('x')
         ax.set_ylabel('y')
-        ax.set_title(title)
+        ax.set_title(self.title)
         ax.set_aspect('equal')
         ax.grid(True, alpha=0.3)
         plt.tight_layout()
-        return ax
+        return 
     
 
     def plot_displacement(self,  ax=None):
@@ -1079,7 +1087,7 @@ class PlaneStressFEM:
             y = np.append(y, y[0])
             
             color = plt.cm.gray_r(self.xi[elem])
-            ax.plot(x, y, color=color, linewidth=1.5)
+            ax.plot(x, y, color=color, linewidth=0.5)
         
         
         ax.set_xlabel('x')
@@ -1088,10 +1096,9 @@ class PlaneStressFEM:
         ax.set_aspect('equal')
         ax.grid(True, alpha=0.3)
         
-        return ax
+        return
 
-
-class TopOptOC:
+class PlaneStressOC:
     """
     Optimality Criteria (OC) optimizer compatible with PlaneStressFEM.
     """
@@ -1368,14 +1375,89 @@ def truss2x2Substructure(E=200e9, A=0.5):
     area = fem_model.A * sub_structure  # Zero area for inactive members
     fem_model.set_area(area)
     print(f"Number of active members: {np.sum(sub_structure)}")  # 10 members
+    return fem_model
 
+def truss_10bar(E=200e9, A=0.5):
+    """
+    Classic 10-bar truss ground structure
+    
+    Reference: Rajeev, S., & Krishnamoorthy, C. S. (1992). 
+    "Discrete optimization of structures using genetic algorithms."
+    Journal of Structural Engineering, 118(5), 1233-1250.
+    
+    Structure:
+         3-------4-------5
+         |\     / \     /|
+         | \   /   \   / |
+         |  \ /     \ /  |
+         0-------1-------2
+    
+    Node layout:
+    - Bottom row (y=0): Nodes 0, 1, 2
+    - Top row (y=H):   Nodes 3, 4, 5
+    
+    Boundary conditions:
+    - Node 0: Fixed (bottom left)
+    - Node 2: Fixed (bottom right)
+    
+    Loading:
+    - Node 1: Vertical load (bottom center)
+    - Node 3: Vertical load (top left)
+    
+    Ground structure: 10 potential members
+    - 4 horizontals (top and bottom chords)
+    - 2 verticals (left and right, NO center vertical)
+    - 4 diagonals (cross-bracing)
+    """
+    
+    # Standard dimensions from benchmark (360 inches = 9.14 m)
+    L = 9.14  # Bay width (meters)
+    H = 9.14  # Height (meters)
+    
+    # Node coordinates
+    nodes = np.array([
+        [0.0, 0.0],   # Node 0 (bottom left) - FIXED
+        [L,   0.0],   # Node 1 (bottom center) - LOADED
+        [2*L, 0.0],   # Node 2 (bottom right) - FIXED
+        [0.0, H],     # Node 3 (top left) - LOADED
+        [L,   H],     # Node 4 (top center)
+        [2*L, H]      # Node 5 (top right)
+    ])
+    
+    # Ground structure with exactly 10 potential bars
+    elements = [
+        (0, 1),  # Bar 0: Bottom chord left
+        (1, 2),  # Bar 1: Bottom chord right
+        (3, 4),  # Bar 2: Top chord left
+        (4, 5),  # Bar 3: Top chord right
+        (0, 3),  # Bar 4: Vertical left
+        (2, 5),  # Bar 5: Vertical right
+        (0, 4),  # Bar 6: Diagonal (0→4)
+        (1, 3),  # Bar 7: Diagonal (1→3)
+        (1, 5),  # Bar 8: Diagonal (1→5)
+        (2, 4)   # Bar 9: Diagonal (2→4)
+    ]
+    
+    # Fixed degrees of freedom
+    fixed_dofs = [0, 1, 4, 5]  # Nodes 0 and 2 fully fixed (x and y)
+    
+    # Applied loads (standard benchmark loads)
+    loads = np.zeros(2 * len(nodes))
+    P = 444822  # 100 kips = 444,822 N
+    loads[2*1 + 1] = -P  # Downward load at node 1 (bottom center)
+    loads[2*3 + 1] = -P  # Downward load at node 3 (top left)
+    
+    # Create FEM model
+    fem_model = TrussFEM(nodes, elements, loads, fixed_dofs, E=E, A=A)
+    
+    return fem_model
 
 """
 Examples of plane stress problems
 
 """
 
-def PlaneStressCantilever(nx=60, ny=20, E= 1e6, nu=0.3):
+def PlaneStressCantilever(nx=60, ny=20, E= 200e9, nu=0.3):
     """
     Classic cantilever beam topology optimization problem
     
@@ -1399,45 +1481,7 @@ def PlaneStressCantilever(nx=60, ny=20, E= 1e6, nu=0.3):
     
     # Load: Downward force at center of right edge
     center_right_node = fea2D.n_nodes_x - 1 + (ny // 2) * fea2D.n_nodes_x
-    fea2D.apply_force(center_right_node, fx=0.0, fy=-1.0)
-    
+    fea2D.apply_force(center_right_node, fx=0.0, fy=-10000)
+    fea2D.title = "Plane Stress Cantilever Beam"
     return fea2D
 
-
-# =============================================================================
-# Example 2: MBB Beam (Half model with symmetry)
-# =============================================================================
-
-def PlaneStressMBBBeam(nx=60, ny=20, E= 1e6, nu=0.3):
-    """
-    MBB (Messerschmitt-Bölkow-Blohm) beam
-    
-    Setup (half model due to symmetry):
-        ↓ F
-        ============================  roller support (uy=0)
-    
-    Fixed bottom-left corner, roller at bottom-right, load at top-left
-    """
-    
-    # Create mesh
-    lx = nx * (6.0 / 60)
-    ly = ny * (1.0 / 20)
-    
-    fea2D = PlaneStressFEM(nx=nx, ny=ny, lx=lx, ly=ly, E=E, nu=nu)
-    
-    # Boundary conditions for MBB beam (half model with symmetry)
-
-    # Left edge: symmetry condition (ux = 0, uy = free)
-    left_nodes = np.arange(0, fea2D.n_nodes, fea2D.n_nodes_x)
-    fea2D.apply_boundary_condition(left_nodes, dof_x=True, dof_y=False)
-
-    # Bottom-right corner: roller support (ux = free, uy = 0)
-    bottom_right_node = fea2D.n_nodes_x - 1
-    fea2D.apply_boundary_condition([bottom_right_node], dof_x=False, dof_y=True)
-
-    # Load: Downward at top-left corner
-    top_left_node = (fea2D.n_nodes_y - 1) * fea2D.n_nodes_x
-    fea2D.apply_force(top_left_node, fx=0.0, fy=-1.0)
-    
-
-    return fea2D

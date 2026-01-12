@@ -26,12 +26,6 @@ import matplotlib.pyplot as plt
 from pyqubo import Binary, Array
 from dimod.reference.samplers import ExactSolver
 import neal
-
-
-
-
-import numpy as np
-import matplotlib.pyplot as plt
 from typing import Dict, List, Tuple, Optional
 import time
 
@@ -46,11 +40,6 @@ Notation matches the LaTeX formulation:
 - q_e: Binary qubit variable for element e
 - q_s: Binary qubit variable for slack
 """
-
-import numpy as np
-import matplotlib.pyplot as plt
-from typing import Dict, List, Tuple, Optional, Callable
-import time
 
 
 class QATrussOptimizer:
@@ -472,3 +461,6 @@ class QATrussOptimizer:
         plt.tight_layout()
 
         plt.show()
+
+    
+
