@@ -1385,13 +1385,6 @@ def truss_10bar(E=200e9, A=0.5):
     "Discrete optimization of structures using genetic algorithms."
     Journal of Structural Engineering, 118(5), 1233-1250.
     
-    Structure:
-         3-------4-------5
-         |\     / \     /|
-         | \   /   \   / |
-         |  \ /     \ /  |
-         0-------1-------2
-    
     Node layout:
     - Bottom row (y=0): Nodes 0, 1, 2
     - Top row (y=H):   Nodes 3, 4, 5
