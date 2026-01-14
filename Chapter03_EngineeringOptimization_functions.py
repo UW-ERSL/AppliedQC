@@ -8,7 +8,7 @@ from scipy.optimize import minimize
 
 
 class TrussFEM:
-    def __init__(self, nodes, elements,loads, fixed_dofs, E=200e9, A=0.5):
+    def __init__(self, nodes, elements,loads, fixed_dofs, E=200e9, A=0.0005):
         """
         Finite element model for 2D truss structures.
         
@@ -40,7 +40,8 @@ class TrussFEM:
         self.n_nodes = len(nodes)
         self.n_dof = 2 * self.n_nodes
         self.L = self.compute_all_lengths()
-        self.initial_volume = np.sum(self.A * self.L)
+        self.initialArea = self.A.copy()
+        self.initial_volume = np.sum(self.initialArea * self.L)
         self.displacements = None
     
     def compute_element_length(self, i, j): 
@@ -148,7 +149,6 @@ class TrussFEM:
             Element lengths (for computing volume)
         """
         K = np.zeros((self.n_dof, self.n_dof))
-        area = self.A
         for idx, (i, j) in enumerate(self.elements):
             K_elem = self.get_element_stiffness_matrix(idx)
      
@@ -305,54 +305,13 @@ class TrussFEM:
         
         return stresses
     
-    def compute_elem_strain_energies(self, displacements):
-        """
-        Compute member stresses from displacement solution.
-        
-        Parameters:
-        -----------
-        area : array-like
-            Cross-sectional areas for each element
-        d : ndarray
-            Displacement vector
-            
-        Returns:
-        --------
-        stresses : ndarray
-            Stress in each element (0 for inactive elements)
-        """
-        strainEnergy = np.zeros(len(self.elements))
-        area = self.A
-        d = displacements
-        for idx, (i, j) in enumerate(self.elements):
-            if area[idx] == 0:
-                continue
-            
-            # Element geometry
-            dx = self.nodes[j, 0] - self.nodes[i, 0]
-            dy = self.nodes[j, 1] - self.nodes[i, 1]
-            L = np.sqrt(dx**2 + dy**2)
-            c, s = dx/L, dy/L
-            
-            # Element displacements
-            d_elem = np.array([d[2*i], d[2*i+1], d[2*j], d[2*j+1]])
-            
-            # Axial strain
-            epsilon = (1/L) * np.array([-c, -s, c, s]) @ d_elem
-            
-            # Stress
-            stress = self.E * epsilon
-            strainEnergy[idx] = 0.5 * stress * epsilon * area[idx] * L
-        
-        return strainEnergy
     
     def compute_volume(self):
         """Compute total volume of design."""
-        
         return np.sum(self.A * self.L)
 
 
-    def optimize_areas(self, volume_fraction=0.5, a_min=1e-6, a_max=None):
+    def optimize_areas(self, volume_fraction=0.5, xi_min=0.01, xi_max=2):
         """
         Optimizes element cross-sectional areas to minimize compliance.
         
@@ -360,21 +319,23 @@ class TrussFEM:
         -----------
         volume_fraction : float
             Allowed volume as a fraction of the initial volume (0 to 1).
-        a_min : float
-            Lower bound for area to avoid numerical singularities.
-        a_max : float, optional
-            Upper bound for area. Defaults to the initial area.
+        xi_min : float
+            Lower bound for relative area to avoid numerical singularities.
+        xi_max : float, optional
+            Upper bound for relative area. Defaults to 1 (initial area).
         """
-        if a_max is None:
-            a_max = np.max(self.A)
+  
         
         # Target volume limit
-        max_volume = volume_fraction * self.initial_volume
+
         n_elems = self.n_elements
-        
+        A0 = self.initialArea
+        print(f"Initial volume: {self.initial_volume:.4f} m^3")
+       
         # 1. Define Objective Function (Compliance)
-        def objective(x):
-            self.set_area(x)
+        def objective(xi):
+            A = xi*A0
+            self.set_area(A)
             u, valid = self.solve()
             if not valid:
                 return 1e20  # Return large penalty if system is unstable
@@ -382,33 +343,48 @@ class TrussFEM:
             # Compliance c = f^T * u
             compliance = self.loads @ u
             
-            # 2. Compute Gradients (Sensitivities)
-            # dc/dA_e = -u_e^T * K_e_unit * u_e
-            # Which is equivalent to -(2 * StrainEnergy_e) / A_e
-            strain_energies = self.compute_elem_strain_energies(u)
-            grad = -2.0 * strain_energies / np.maximum(x, 1e-10)
-            
+            # Sensitivity: dc/dxi_e = -A0 * E * L_e * epsilon_e^2
+            grad = np.zeros(n_elems)
+            for elem in range(n_elems):
+                i, j = self.elements[elem]
+                
+                # Element geometry
+                dx = self.nodes[j, 0] - self.nodes[i, 0]
+                dy = self.nodes[j, 1] - self.nodes[i, 1]
+                L = self.L[elem]  # Already computed
+                c, s = dx/L, dy/L
+                
+                # Element displacements
+                u_elem = self.get_element_displacements(elem)
+                
+                # Axial strain
+                epsilon = (1/L) * np.array([-c, -s, c, s]) @ u_elem
+                
+                # Gradient
+                grad[elem] = -A0[elem] * self.E * L * epsilon**2
+                    
             return compliance, grad
 
         # 3. Define Constraints (Volume)
-        def volume_constraint(x):
-            # Must be >= 0 for SLSQP (max_vol - current_vol >= 0)
-            return max_volume - np.sum(x * self.L)
+        def volume_constraint(xi):
+            # Must be >= 0 for SLSQP
+            volume = np.sum(xi * A0 * self.L)
+            return volume_fraction - volume/self.initial_volume
 
-        def volume_gradient(x):
-            return -self.L
+        def volume_gradient(xi):
+            return -A0 * self.L / self.initial_volume
 
         # Constraint dictionary
         cons = {'type': 'ineq', 'fun': volume_constraint, 'jac': volume_gradient}
         
         # 4. Bounds for A (to prevent elements from disappearing entirely)
-        bounds = [(a_min, a_max) for _ in range(n_elems)]
+        bounds = [(xi_min, xi_max) for _ in range(n_elems)]
         
         # 5. Run Optimization
-        print(f"Starting optimization (Target Volume: {max_volume:.4f} m^3)...")
+        print(f"Starting optimization (Target Volume: {volume_fraction:.4f} fraction)...")
         res = minimize(
             fun=objective,
-            x0=self.A,
+            x0=np.ones(n_elems),
             method='SLSQP',
             jac=True,
             bounds=bounds,
@@ -417,8 +393,9 @@ class TrussFEM:
         )
         
         if res.success:
-            self.set_area(res.x)
-            print("Optimization successful.")
+            self.set_area(res.x * self.initialArea)
+            print(" Optimization successful.")
+            print(f"Final volume: {self.compute_volume():.3g} m^3")
         else:
             print(f"Optimization failed: {res.message}")
             
@@ -480,10 +457,10 @@ class TrussFEM:
         metrics : dict
             Performance metrics dictionary
         """
-        print(f"  Volume: {metrics['volume']:.2f} m^3")
-        print(f"  Max displacement: {metrics['max_disp']*1000:.4e} m")
-        print(f"  Max stress: {metrics['max_stress']/1e6:.2e} Pa")
-        print(f"  Compliance: {metrics['compliance']:.2e} J")
+        print(f"  Volume: {metrics['volume']:.3g} m^3")
+        print(f"  Max displacement: {metrics['max_disp']:.4g} m")
+        print(f"  Max stress: {metrics['max_stress']:.3g} Pa")
+        print(f"  Compliance: {metrics['compliance']:.3g} J")
         print(f"  Feasible: {metrics['feasible']}")
 
     def plot_truss(self, design=None, 
@@ -522,9 +499,9 @@ class TrussFEM:
         
         A = self.A
         # Plot undeformed structure with thickness proportional to A
-        max_A = np.max(A) if np.max(A) > 0 else 1.0
+        ref_A = np.mean(A)
         for idx, (i, j) in enumerate(self.elements):
-            lw = 0.2 + 20.0 * (A[idx] / max_A) if active_elements[idx] else 0.5
+            lw = 0.1 + 5.0 * (A[idx] / ref_A) if active_elements[idx] else 0.5
             color = 'k' if active_elements[idx] else 'lightgray'
             alpha = 0.7 if active_elements[idx] else 0.3
             ax.plot([self.nodes[i, 0], self.nodes[j, 0]], 
@@ -553,7 +530,10 @@ class TrussFEM:
         # Plot undeformed nodes
         if show_nodes:
             ax.plot(self.nodes[:, 0], self.nodes[:, 1], 
-                'o', color='lightgray', markersize=8, zorder=4)
+            'o', color='lightgray', markersize=8, zorder=4)
+            # Show node numbers next to nodes
+            for i, (x, y) in enumerate(self.nodes):
+                ax.text(x+0.08, y + 0.08, str(i), color='black', fontsize=20, ha='center', va='bottom', alpha=0.8)
         
         # Mark fixed supports
         if self.fixed_dofs is not None:
@@ -999,8 +979,8 @@ class PlaneStressFEM:
         """
         Print performance metrics for the current design.
         """
-        print(f"  Compliance: {metrics['compliance']:.4e}")
-        print(f"  Volume: {metrics['volume']:.4e}")
+        print(f"  Compliance: {metrics['compliance']:.4g}")
+        print(f"  Volume: {metrics['volume']:.4g}")
         print(f"  Volume fraction: {metrics['volume_fraction']:.4f}")
         print(f"  Feasible: {metrics['feasible']}")
 
@@ -1231,8 +1211,8 @@ Examples of truss problems
 
 """
 
-def truss1x1(E=200e9, A=0.5):
-    # Example usage with the 1x1 truss
+def truss2x2(E=200e9, A=0.0005):
+    # Example usage with the 2x2 truss
     nodes = np.array([
         [0.0, 0.0],   # Node 0 (bottom left) - FIXED
         [1.0, 0.0],   # Node 1 (bottom right)  - LOADED
@@ -1256,8 +1236,8 @@ def truss1x1(E=200e9, A=0.5):
 
     return fem_model
 
-def truss1x2(E=200e9, A=0.5):
-    # Example usage with the 1x2 truss
+def truss2x3(E=200e9, A=0.0005):
+    # Example usage with the 2x3 truss
     nodes = np.array([
         [0.0, 0.0],   # Node 0 (bottom left) - FIXED
         [1.0, 0.0],   # Node 1 (bottom right) - LOADED
@@ -1286,14 +1266,16 @@ def truss1x2(E=200e9, A=0.5):
     return fem_model
 
 
-def truss3x2(E=200e9, A=0.5):
+def truss3x2(E=200e9, A=0.0005):
     # Example usage with the 3x2 truss
+    # Nodes: 6
+    # Elements: 11
     nodes = np.array([
         [0.0, 0.0],   # Node 0 (bottom left) - FIXED
         [2.0, 0.0],   # Node 1 (bottom center)
-        [4.0, 0.0],   # Node 2 (bottom right)  - LOADED
-        [0.0, 2.0],   # Node 3 (top left) - FIXED
-        [2.0, 2.0],   # Node 4 (top center)
+        [4.0, 0.0],   # Node 2 (bottom right) - FIXED
+        [0.0, 2.0],   # Node 3 (top left)
+        [2.0, 2.0],   # Node 4 (top center) - LOADED
         [4.0, 2.0]    # Node 5 (top right)
     ])
 
@@ -1303,20 +1285,20 @@ def truss3x2(E=200e9, A=0.5):
         (0, 4), (1, 3), (1, 5), (2, 4)   # Diagonals
     ]
 
-    
-
     # Define problem
-    fixed_dofs = [0, 1, 6, 7]  # Nodes 0 and 3 fixed
+    fixed_dofs = [0, 1, 4, 5]  # Nodes 0 and 2 fixed
     loads = np.zeros(2 * len(nodes))
-    loads[2*2 + 1] = -10000  # 10 kN downward at node 2
+    loads[2*4 + 1] = -10000  # 10 kN downward at node 4
 
     # Create FEM model
     fem_model = TrussFEM(nodes, elements, loads, fixed_dofs, E=E, A=A)
 
     return fem_model
 
-def truss2x2(E=200e9, A=0.5):
-    # Example usage with the 2x2 truss
+def truss3x3(E=200e9, A=0.0005):
+    # Example usage with the 3x3 truss
+    # Nodes: 9
+    # Elements: 26
     nodes = np.array([
         [0.0, 0.0],   # Node 0 (bottom left) - FIXED
         [2.0, 0.0],   # Node 1 (bottom center)
@@ -1348,9 +1330,9 @@ def truss2x2(E=200e9, A=0.5):
 
     return fem_model
 
-def truss2x2Substructure(E=200e9, A=0.5):
+def truss3x3Substructure(E=200e9, A=0.5):
     
-    fem_model = truss2x2(E=E, A=A)
+    fem_model = truss3x3(E=E, A=A)
     #  Plot with a specific design
     sub_structure = np.array([
         # Horizontal members (indices 0-5)
@@ -1377,7 +1359,7 @@ def truss2x2Substructure(E=200e9, A=0.5):
     print(f"Number of active members: {np.sum(sub_structure)}")  # 10 members
     return fem_model
 
-def truss_10bar(E=200e9, A=0.5):
+def truss_10bar(E=200e9, A=0.005):
     """
     Classic 10-bar truss ground structure
     

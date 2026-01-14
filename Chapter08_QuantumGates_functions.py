@@ -27,61 +27,64 @@ References:
 import numpy as np
 from qiskit import QuantumCircuit, transpile
 from qiskit_aer import Aer
-
+from qiskit_aer import AerSimulator
 import matplotlib.pyplot as plt
 import numpy as np
 from qiskit_ibm_runtime import QiskitRuntimeService
 from qiskit_ibm_runtime import SamplerV2 as Sampler
 from qiskit.transpiler.preset_passmanagers import generate_preset_pass_manager
 
-def simulateCircuit(circuit, method = 'matrix_product_state', shots=1000):
+def simulateCircuit(circuit, method='matrix_product_state', shots=1000, 
+                     do_transpile=True, noise_model=None):
     """
-    Simulate a quantum circuit using Qiskit Aer simulator.
-    
-    Simulates quantum circuit evolution classically using specified simulation method.
-    Note: Classical simulation has exponential cost O(2^n) in both time and memory,
-    where n is the number of qubits. This limits practical simulation to ~30-40 qubits.
-    
-    Parameters
-    ----------
-    circuit : QuantumCircuit
-        The quantum circuit to simulate
-    method : str, optional
-        Simulation method to use (default: 'matrix_product_state')
-        Other options: 'statevector', 'density_matrix', 'stabilizer', etc.
-    shots : int, optional
-        Number of measurement shots (default: 1000)
-        More shots reduce statistical error: uncertainty ~ 1/sqrt(shots)
-        For precise probability estimates, use shots ≥ 10000
-    
-    Returns
-    -------
-    dict
-        Dictionary of measurement outcomes and their counts
-        Keys are bitstrings (e.g., '01' for |01⟩), values are integer counts
-    
-    Complexity
-    ----------
-    Time: O(shots × 2^n × gates) where n = number of qubits
-    Space: O(2^n) to store statevector
-    
-    Example
-    -------
-    >>> from qiskit import QuantumCircuit
-    >>> circuit = QuantumCircuit(1, 1)
-    >>> circuit.h(0)  # Apply Hadamard gate
-    >>> circuit.measure(0, 0)
-    >>> counts = simulateCircuit(circuit, shots=1000)
-    >>> print(counts)
-    {'0': ~500, '1': ~500}  # Equal superposition: |0⟩ + |1⟩ → 50/50 probability
+    Simulates a circuit (including MCX gates) with optional noise.
     """
-    backend = Aer.get_backend('qasm_simulator', method=method)
-    transpiled_circuit = transpile(circuit, backend)
-    job = backend.run(transpiled_circuit, shots=shots)
-    counts = job.result().get_counts(circuit)
-    return counts
+    # AerSimulator supports MCX natively in most methods
+    simulator = AerSimulator(method=method, noise_model=noise_model)
+    
+    # We must transpile if there is noise, otherwise MCX stays as one high-level block
+    should_transpile = do_transpile or (noise_model is not None)
+    
+    if should_transpile:
+        # Transpilation breaks MCX into basis gates (CX, SX, RZ, etc.)
+        input_circuit = transpile(circuit, simulator)
+    else:
+        # High-level simulation: MCX is treated as a single large unitary matrix
+        input_circuit = circuit
+        
+    job = simulator.run(input_circuit, shots=shots)
+    return job.result().get_counts()
 
-def runCircuitOnIBMQuantum(circuit,nShots=1024):
+def analyzeCircuitForHardware(circuit, min_num_qubits=15):
+    """
+    Analyzes the circuit's compatibility and expected performance on hardware.
+    """
+
+    service = QiskitRuntimeService()
+	# Select least busy backend to minimize queue time
+    backend = service.least_busy(min_num_qubits=min_num_qubits, operational=True, simulator=False)
+    print(f"Using backend: {backend}")
+    # 1. Transpile to see what the hardware actually 'sees'
+    pm = generate_preset_pass_manager(backend=backend, optimization_level=3)
+    isa_circuit = pm.run(circuit)
+    
+    # 2. Extract key metrics
+    gate_counts = isa_circuit.count_ops()
+    depth = isa_circuit.depth()
+    
+    print(f"--- Hardware Analysis for {backend.name} ---")
+    print(f"Original Gate Count: {sum(circuit.count_ops().values())}")
+    print(f"Transpiled Gate Count: {sum(gate_counts.values())}")
+    print(f"Circuit Depth: {depth}")
+    print(f"Multi-Qubit (CX/ECR) Gates: {gate_counts.get('cx', gate_counts.get('ecr', 0))}")
+    
+    # 3. Warning for students
+    if depth > 100:
+        print("Warning: High depth. Results may be dominated by decoherence (noise).")
+    
+    return isa_circuit
+
+def runCircuitOnIBMQuantum(circuit,shots=1024,min_num_qubits=15,):
 	"""
 	Execute circuit on IBM Quantum hardware
 	=======================================
@@ -97,7 +100,7 @@ def runCircuitOnIBMQuantum(circuit,nShots=1024):
 	----------
 	circuit : QuantumCircuit
 		Circuit to execute (will be transpiled for hardware)
-	nShots : int
+	shots : int
 		Number of measurement repetitions (default: 1024)
 		More shots reduce statistical noise but cost more compute time
 	
@@ -112,17 +115,21 @@ def runCircuitOnIBMQuantum(circuit,nShots=1024):
 	"""
 	service = QiskitRuntimeService()
 	# Select least busy backend to minimize queue time
-	backend = service.least_busy(operational=True, simulator=False)
+	backend = service.least_busy(min_num_qubits=min_num_qubits, operational=True, simulator=False)
 	print(f"Using backend: {backend}")
-	circuit.measure_all()
+	#circuit.measure_all()
 	# Transpile to hardware-native gates and qubit topology
-	# optimization_level=1: balance between depth reduction and compilation time
-	pm = generate_preset_pass_manager(backend=backend, optimization_level=1)
+	# optimization_level=3: aggressive optimization for depth reduction (FOR NISQ)
+	pm = generate_preset_pass_manager(backend=backend, optimization_level=3)
 	isa_circuit = pm.run(circuit)  # ISA = Instruction Set Architecture
 	sampler = Sampler(mode=backend) 
-	job = sampler.run([isa_circuit],shots = nShots)
+    # Enable measurement twirling (TREX-style mitigation)
+    # This will offset any systematic measurement bias but increases shots needed
+	sampler.options.twirling.enable_measure = True
+	sampler.options.twirling.num_randomizations = 32  # Standard for good balance
+	job = sampler.run([isa_circuit],shots = shots)
 	pub_result = job.result()[0]
-	return pub_result.data.meas.get_counts()
+	return pub_result.data.c.get_counts()
 
 def plot_measurement_results(counts, title="Measurement Results", figsize=(10, 6)):
     """
