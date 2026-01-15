@@ -507,6 +507,28 @@ class TrussFEM:
             ax.plot([self.nodes[i, 0], self.nodes[j, 0]], 
                 [self.nodes[i, 1], self.nodes[j, 1]], 
                 color=color, linewidth=lw, alpha=alpha, zorder=1)
+            # Use a different font for node labels
+            if show_labels:
+                ax.text(self.nodes[i, 0], self.nodes[i, 1], str(i), color='blue', fontsize=16,
+                        ha='center', va='center', fontname='Comic Sans MS', zorder=10)
+                ax.text(self.nodes[j, 0], self.nodes[j, 1], str(j), color='blue', fontsize=16,
+                        ha='center', va='center', fontname='Comic Sans MS', zorder=10)
+            # Plot element number at 75% along the element, slightly above the member
+            frac = 0.75
+            x_pos = self.nodes[i, 0] + frac * (self.nodes[j, 0] - self.nodes[i, 0])
+            y_pos = self.nodes[i, 1] + frac * (self.nodes[j, 1] - self.nodes[i, 1])
+            # Offset perpendicular to the element
+            dx = self.nodes[j, 0] - self.nodes[i, 0]
+            dy = self.nodes[j, 1] - self.nodes[i, 1]
+            length = np.hypot(dx, dy)
+            if length > 0:
+                # Perpendicular direction (normalized)
+                perp_x = -dy / length
+                perp_y = dx / length
+                offset = 0.08  # Adjust as needed
+                x_pos += offset * perp_x
+                y_pos += offset * perp_y
+            ax.text(x_pos, y_pos, str(idx), color='red', fontsize=20, ha='center', va='center', alpha=0.8)
         
         # Plot deformed structure if displacements provided
         if displacements is not None:
@@ -531,10 +553,13 @@ class TrussFEM:
         if show_nodes:
             ax.plot(self.nodes[:, 0], self.nodes[:, 1], 
             'o', color='lightgray', markersize=8, zorder=4)
-            # Show node numbers next to nodes
+            # Show node numbers next to nodes with shaded background
             for i, (x, y) in enumerate(self.nodes):
-                ax.text(x+0.08, y + 0.08, str(i), color='black', fontsize=20, ha='center', va='bottom', alpha=0.8)
-        
+                ax.text(
+                    x + 0.08, y + 0.08, str(i),
+                    color='black', fontsize=20, ha='center', va='bottom', alpha=0.8,
+                    bbox=dict(boxstyle='round,pad=0.3', facecolor='lightgray', edgecolor='none', alpha=0.7)
+                )
         # Mark fixed supports
         if self.fixed_dofs is not None:
             fixed_nodes = set()

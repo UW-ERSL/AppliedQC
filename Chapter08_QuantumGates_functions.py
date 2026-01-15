@@ -55,6 +55,31 @@ def simulateCircuit(circuit, method='matrix_product_state', shots=1000,
     job = simulator.run(input_circuit, shots=shots)
     return job.result().get_counts()
 
+def analyzeCircuitForSimulator(circuit, method='matrix_product_state', shots=1000, noise_model=None):
+    """
+    Analyzes the circuit's gate counts and depth after transpilation for simulation.
+    """
+
+    simulator = AerSimulator(method=method, noise_model=noise_model)
+    
+    # Transpile to decompose MCX and adapt to simulator basis gates
+    input_circuit = transpile(circuit, simulator)
+    
+    # Extract key metrics
+    gate_counts = input_circuit.count_ops()
+    depth = input_circuit.depth()
+    
+    print(f"--- Simulator Analysis ({method}) ---")
+    print(f"Number of qubits: {input_circuit.num_qubits}")
+    print(f"Original Gate Count: {sum(circuit.count_ops().values())}")
+    print(f"Transpiled Gate Count: {sum(gate_counts.values())}")
+    print(f"Circuit Depth: {depth}")
+    print(f"Multi-Qubit (CX/ECR) Gates: {gate_counts.get('cx', gate_counts.get('ecr', 0))}")
+
+    if (input_circuit.num_qubits > 30) and (method != 'matrix_product_state'):
+        print("Warning: High qubit count with non-MPS method may lead to memory issues.")
+
+
 def analyzeCircuitForHardware(circuit, min_num_qubits=15):
     """
     Analyzes the circuit's compatibility and expected performance on hardware.
@@ -73,6 +98,7 @@ def analyzeCircuitForHardware(circuit, min_num_qubits=15):
     depth = isa_circuit.depth()
     
     print(f"--- Hardware Analysis for {backend.name} ---")
+    print(f"Number of qubits (on chosen hardware): {isa_circuit.num_qubits}")
     print(f"Original Gate Count: {sum(circuit.count_ops().values())}")
     print(f"Transpiled Gate Count: {sum(gate_counts.values())}")
     print(f"Circuit Depth: {depth}")
