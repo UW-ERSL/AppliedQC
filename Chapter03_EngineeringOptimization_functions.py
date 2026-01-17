@@ -528,7 +528,8 @@ class TrussFEM:
                 offset = 0.08  # Adjust as needed
                 x_pos += offset * perp_x
                 y_pos += offset * perp_y
-            ax.text(x_pos, y_pos, str(idx), color='red', fontsize=20, ha='center', va='center', alpha=0.8)
+            if (show_labels):
+                ax.text(x_pos, y_pos, str(idx), color='red', fontsize=20, ha='center', va='center', alpha=0.8)
         
         # Plot deformed structure if displacements provided
         if displacements is not None:
@@ -553,13 +554,14 @@ class TrussFEM:
         if show_nodes:
             ax.plot(self.nodes[:, 0], self.nodes[:, 1], 
             'o', color='lightgray', markersize=8, zorder=4)
-            # Show node numbers next to nodes with shaded background
-            for i, (x, y) in enumerate(self.nodes):
-                ax.text(
-                    x + 0.08, y + 0.08, str(i),
-                    color='black', fontsize=20, ha='center', va='bottom', alpha=0.8,
-                    bbox=dict(boxstyle='round,pad=0.3', facecolor='lightgray', edgecolor='none', alpha=0.7)
-                )
+            if show_labels:
+                # Show node numbers next to nodes with shaded background
+                for i, (x, y) in enumerate(self.nodes):
+                    ax.text(
+                        x + 0.08, y + 0.08, str(i),
+                        color='black', fontsize=20, ha='center', va='bottom', alpha=0.8,
+                        bbox=dict(boxstyle='round,pad=0.3', facecolor='lightgray', edgecolor='none', alpha=0.7)
+                    )
         # Mark fixed supports
         if self.fixed_dofs is not None:
             fixed_nodes = set()
@@ -576,10 +578,10 @@ class TrussFEM:
         
         # Draw load arrows
         if self.loads is not None:
-            arrow_scale = 0.5  # Arrow length relative to structure size
+            arrow_scale = 0.1  # Arrow length relative to structure size
             max_load = np.max(np.abs(self.loads[self.loads != 0])) if np.any(self.loads != 0) else 1.0
             
-            load_drawn = False
+           
             for i in range(self.n_nodes):
                 fx = self.loads[2*i]
                 fy = self.loads[2*i+1]
@@ -595,22 +597,23 @@ class TrussFEM:
                     
                     # Arrow starts away from node (opposite to force direction)
                     # and points toward node (in force direction)
-                    start_x = self.nodes[i, 0] - arrow_len * fx_norm
-                    start_y = self.nodes[i, 1] - arrow_len * fy_norm
+                    start_x = self.nodes[i, 0] 
+                    start_y = self.nodes[i, 1] 
                     
                     # Arrow displacement (in direction of force)
                     dx = arrow_len * fx_norm
                     dy = arrow_len * fy_norm
                     
                     ax.arrow(start_x, start_y, dx, dy,
-                            head_width=0.15, head_length=0.1, 
+                            head_width=0.05, head_length=0.03, 
                             fc='red', ec='red', linewidth=2.5, zorder=7,
                             )
-                    load_drawn = True
                     
-                    # Add load magnitude label (at start of arrow)
+                    # Add load magnitude label (at end of arrow)
                     load_kN = magnitude / 1000
-                    ax.text(start_x, start_y, 
+                    end_x = start_x + dx
+                    end_y = start_y + dy
+                    ax.text(end_x, end_y, 
                         f'{load_kN:.1f} kN',
                         color='red', fontsize=11, fontweight='bold',
                         ha='center', va='bottom' if fy < 0 else 'top',
@@ -1355,7 +1358,76 @@ def truss3x3(E=200e9, A=0.0005):
 
     return fem_model
 
-def truss3x3Substructure(E=200e9, A=0.5):
+def truss_grid(M = 8, N = 4, Lx=1.0, E=200e9, A=0.0005):
+        """
+        Create a 2D truss ground structure with an M x N grid of nodes.
+        Each square cell is fully connected: horizontal, vertical, and both diagonals.
+
+        Parameters:
+        -----------
+        M : int
+            Number of nodes in x-direction (columns)
+        N : int
+            Number of nodes in y-direction (rows)
+        Lx : float
+            Total width of the grid
+        Ly : float
+            Total height of the grid
+        E : float
+            Young's modulus
+        A : float
+            Cross-sectional area
+
+        Returns:
+        --------
+        TrussFEM instance
+        """
+        # Node coordinates
+        Ly= Lx * (N - 1) / (M - 1)  # Maintain aspect ratio
+        x_coords = np.linspace(0, Lx, M)
+        y_coords = np.linspace(0, Ly, N)
+        nodes = np.array([[x, y] for y in y_coords for x in x_coords])
+
+        # Helper to get node index from (ix, iy)
+        def node_id(ix, iy):
+            return iy * M + ix
+
+        elements = []
+        for iy in range(N):
+            for ix in range(M):
+                n0 = node_id(ix, iy)
+                # Horizontal (right neighbor)
+                if ix < M - 1:
+                    n1 = node_id(ix + 1, iy)
+                    elements.append((n0, n1))
+                # Vertical (top neighbor)
+                if iy < N - 1:
+                    n2 = node_id(ix, iy + 1)
+                    elements.append((n0, n2))
+                # Diagonal up-right
+                if ix < M - 1 and iy < N - 1:
+                    n3 = node_id(ix + 1, iy + 1)
+                    elements.append((n0, n3))
+                # Diagonal up-left
+                if ix > 0 and iy < N - 1:
+                    n4 = node_id(ix - 1, iy + 1)
+                    elements.append((n0, n4))
+
+        # Example boundary conditions: fix left wall,
+        fixed_dofs = []
+        for iy in range(N):
+            n = node_id(0, iy)
+            fixed_dofs.extend([2 * n, 2 * n + 1])
+        print(f"Fixed DOFs at left wall nodes: {[node_id(0, iy) for iy in range(N)]}")
+        loads = np.zeros(2 * M * N)
+        bottom_right = node_id(M - 1, 0)
+        print(f"Applying load at node {bottom_right} (bottom right corner)")
+        loads[2 * bottom_right + 1] = -10000  # Downward force at bottom right node
+
+        fem_model = TrussFEM(nodes, elements, loads, fixed_dofs, E=E, A=A)
+        return fem_model
+
+def truss3x3Substructure(E=200e9, A=0.0005):
     
     fem_model = truss3x3(E=E, A=A)
     #  Plot with a specific design

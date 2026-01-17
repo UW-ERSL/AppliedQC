@@ -102,12 +102,12 @@ def hadamard_inner_product(y_prep, x_prep, shots, backend=None, isreal=False):
     ht_real = hadamard_test_circuit(u_gate, y_prep.to_gate(), complex_test=False)
     
     if isreal:
-        counts_real = simulateCircuit(ht_real, shots)
+        counts_real = simulateCircuit(ht_real, shots= shots)
         return hadamard_test_expval(counts_real)
     else:
         ht_imag = hadamard_test_circuit(u_gate, y_prep.to_gate(), complex_test=True)
-        counts_real = simulateCircuit(ht_real, shots)
-        counts_imag = simulateCircuit(ht_imag, shots)
+        counts_real = simulateCircuit(ht_real, shots= shots)
+        counts_imag = simulateCircuit(ht_imag, shots= shots)
         
         real_part = hadamard_test_expval(counts_real)
         imag_part = hadamard_test_expval(counts_imag)
@@ -191,7 +191,7 @@ def inner_product_estimation(se_unit_vector, test_unit_vector, shots = 10000):
 
     qc.measure(q_aux, c_res)
     # Simulate circuit
-    counts = simulateCircuit(qc, shots)
+    counts = simulateCircuit(qc, shots= shots )
     
     # Calculate |<s|x>|^2
     p0 = counts.get('0', 0) / shots
