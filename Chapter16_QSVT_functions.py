@@ -1,61 +1,211 @@
 import numpy as np
+import scipy
 import matplotlib.pyplot as plt
 from qiskit import QuantumCircuit
-from qiskit.circuit import ParameterVector
-from qiskit_ibm_runtime import Estimator
 from qiskit_aer import Aer
-from qiskit.quantum_info import SparsePauliOp
-from IPython.display import display
-
-from qiskit_algorithms.optimizers import ADAM  # Yes, there's a Qiskit ADAM!
-
-import numpy as np
-import scipy
 from qiskit import QuantumCircuit, transpile, QuantumRegister, ClassicalRegister
 from qiskit.quantum_info import Statevector, Operator
-from qiskit_aer import Aer
 
-import numpy as np
 from numpy.polynomial.chebyshev import Chebyshev
-# Assuming your library is pyqsp or similar
 from pyqsp.angle_sequence import QuantumSignalProcessingPhases 
 
-def get_inverse_phases(degree, kappa = 2):
+import numpy as np
+import matplotlib.pyplot as plt
+from numpy.polynomial import Chebyshev
+import numpy as np
+import matplotlib.pyplot as plt
+from numpy.polynomial import Chebyshev
+
+def plot_approximation_comparison(degree, kappa):
+    """Visualization showing how δ/x blows up near the singularity."""
+    phases, scale_factor, sigma = get_inverse_phases(degree, kappa, buffer=0)
+    
+    delta = 1 / kappa
+    x = np.linspace(-1, 1, 2000)
+    
+    # Define how close to show the singularity
+    x_near_singularity = 0.1 / kappa
+    
+    def target_scaled(x):
+        x_safe = np.where(np.abs(x) < 1e-15, 1e-15 * np.sign(x), x)
+        return scale_factor / x_safe
+    
+    def target_smooth(x):
+        x_safe = np.where(np.abs(x) < 1e-15, 1e-15 * np.sign(x), x)
+        return scale_factor * (1 - np.exp(-(x_safe / sigma)**2)) / x_safe
+    
+    poly = Chebyshev.interpolate(target_smooth, deg=degree, domain=[-1, 1])
+    poly.coef[::2] = 0
+    
+    fig, ax = plt.subplots(figsize=(12, 7))
+    
+    # Show scaled ideal from ±0.1/κ onwards
+    mask_pos = x > x_near_singularity
+    mask_neg = x < -x_near_singularity
+    
+    ax.plot(x[mask_pos], target_scaled(x)[mask_pos], 'k--', linewidth=2.5, alpha=0.6,
+            label=rf'Scaled ideal')
+    ax.plot(x[mask_neg], target_scaled(x)[mask_neg], 'k--', linewidth=2.5, alpha=0.6)
+    
+    # Plot smoothed and polynomial
+    ax.plot(x, target_smooth(x), 'b-', linewidth=2.5, 
+            label=f'Smoothed')
+    ax.plot(x, poly(x), 'r--', linewidth=2, alpha=0.8,
+            label=f'Polynomial')
+    
+    # Shading
+    ax.axvspan(delta, 1, alpha=0.15, color='green', 
+               label=f'Valid region')
+    ax.axvspan(-1, -delta, alpha=0.15, color='green')
+    
+    # Mark boundaries
+    ax.axvline(delta, color='orange', linestyle='--', linewidth=1.5, 
+               label=f'δ = {delta:.3f}')
+    ax.axvline(-delta, color='orange', linestyle='--', linewidth=1.5)
+    
+    ax.axvline(x_near_singularity, color='gray', linestyle=':', 
+               linewidth=1, alpha=0.5)
+    ax.axvline(-x_near_singularity, color='gray', linestyle=':', 
+               linewidth=1, alpha=0.5)
+    
+    ax.set_xlabel('x (normalized singular value)', fontsize=20)
+    ax.set_ylabel('f(x)', fontsize=20)
+    ax.set_title(f'Scaled Inverse Approximation (κ={kappa}, d={degree})', 
+                 fontsize=20, fontweight='bold')
+    ax.legend(fontsize=20, loc='upper right')
+    ax.grid(True, alpha=0.3)
+    
+    # Set tick label sizes
+    ax.tick_params(axis='both', which='major', labelsize=20)
+    
+    # Auto y-limits based on value at cutoff
+    max_at_cutoff = abs(scale_factor / x_near_singularity)
+    ylim = min(max_at_cutoff * 1.2, 10)  # Cap at 10 for readability
+    ax.set_ylim([-ylim, ylim])
+    
+
+    
+    plt.tight_layout()
+    plt.show()
+
+# Usag
+
+def _reconstruct_polynomial_from_phases(degree, scale_factor, sigma):
     """
-    Generates QSVT phase angles for f(x) = 1/x approximation.
+    Helper: Reconstruct Chebyshev polynomial from smoothing parameters.
+    
+    This ensures consistency across all error computation functions.
+    """
+    def target_smooth(x):
+        x_safe = np.where(np.abs(x) < 1e-15, 1e-15 * np.sign(x), x)
+        return scale_factor * (1 - np.exp(-(x_safe / sigma)**2)) / x_safe
+    
+    poly = Chebyshev.interpolate(target_smooth, deg=degree, domain=[-1, 1])
+    poly.coef[::2] = 0  # Enforce odd parity
+    
+    return poly
+
+
+def get_total_error_vs_unscaled_ideal(degree, kappa, buffer=0):
+    """
+    Computes total approximation error: |(1/δ)P(x) - 1/x|
+    """
+    phases, scale_factor, sigma = get_inverse_phases(degree, kappa, buffer)
+    
+    kappa_eff = kappa * (1 + buffer)
+    delta_eff = 1 / kappa_eff
+    
+    x_pos = np.linspace(delta_eff, 1, 10000)
+    x_neg = np.linspace(-1, -delta_eff, 10000)
+    
+    # Use helper to reconstruct polynomial
+    poly = _reconstruct_polynomial_from_phases(degree, scale_factor, sigma)
+    
+    # Scale to approximate 1/x (not δ/x)
+    y_poly_scaled_pos = poly(x_pos) / scale_factor
+    y_poly_scaled_neg = poly(x_neg) / scale_factor
+    
+    y_ideal_pos = 1 / x_pos
+    y_ideal_neg = 1 / x_neg
+    
+    error_pos = np.abs(y_poly_scaled_pos - y_ideal_pos)
+    error_neg = np.abs(y_poly_scaled_neg - y_ideal_neg)
+    
+    return max(np.max(error_pos), np.max(error_neg))
+
+
+def get_inverse_phases(degree, kappa=2, buffer=0):
+    """
+    Generates QSVT phase angles for f(x) ≈ 1/x approximation.
+    
+    Uses smoothed inverse with Gaussian fade to handle singularity,
+    following QSVT framework (Gilyen et al., 2019, STOC).
     
     Args:
-        degree (int): The polynomial degree (higher = more accurate).
-        kappa (float): Condition number (1/delta).
-        solver_func: Your QuantumSignalProcessingPhases class/function.
+        degree (int): Polynomial degree (will be made odd for parity)
+        kappa (float): Condition number κ = σ_max/σ_min
+        buffer (float): Safety margin to push singularity outside domain
+    
+    Returns:
+        phases (list): QSVT phase angles
+        scale_factor (float): Normalization constant
+        sigma (float): Smoothing parameter (for error computation)
     """
-    # Ensure degree is odd (QSVT for 1/x requires odd degree)
     if degree % 2 == 0:
         degree += 1
-        print(f"Degree must be odd for QSVT 1/x. Using degree={degree}.")
-    if kappa <= 1:
-        kappa = 2
-        print(f"kappa must be > 1. Using kappa={kappa}.")
-    delta = 1/kappa
+        
+    kappa_eff = kappa * (1 + buffer)
+    delta_eff = 1 / kappa_eff
+    scale_factor = delta_eff
     
-    # 1. Define the target function (scaled to stay <= 1)
-    # We use a factor (e.g., delta) to ensure f(x) fits in the QSVT box.
-    scale_factor = delta
+    # Define sigma ONCE - this is your smoothing parameter
+    sigma = delta_eff / 3  # Consistent with 1/(3*kappa_eff)
+    
     def target_func(x):
-        # Handle the region near zero to avoid singularities during fitting
-        return scale_factor / np.where(np.abs(x) < delta, delta, x)
+        x_safe = np.where(np.abs(x) < 1e-15, 1e-15 * np.sign(x), x)
+        return scale_factor * (1 - np.exp(-(x_safe / sigma)**2)) / x_safe
 
-    # 2. Generate Chebyshev coefficients via interpolation
-    # Domain is [-1, 1], but we care about [delta, 1]
     poly = Chebyshev.interpolate(target_func, deg=degree, domain=[-1, 1])
-    # we want only odd powers for 1/x approximation
-    poly.coef[::2] = 0 # This kills the even terms (0, 2, 4...
-    print(f"Chebyshev coefficients (odd terms only): {poly.coef}")
-    # 3. Compute Phase Angles
-    # Note: solver_func is your QuantumSignalProcessingPhases
-    phases = QuantumSignalProcessingPhases(poly,  signal_operator="Wz" )
-    print(phases)
-    return [float(phi) for phi in phases], scale_factor
+    poly.coef[::2] = 0  # Odd parity
+    
+    max_val = np.max(np.abs(poly(np.linspace(-1, 1, 1000))))
+    if max_val > 0.999:
+        poly.coef *= (0.999 / max_val)
+        scale_factor *= (0.999 / max_val)
+
+    phases = QuantumSignalProcessingPhases(poly, signal_operator="Wz")
+    
+    return [float(phi) for phi in phases], scale_factor, sigma
+
+
+def get_error_inverse_approximation(degree, kappa=2, buffer=0):
+    """
+    Computes approximation error for QSVT inverse polynomial.
+    
+    Returns:
+        max_error (float): Maximum absolute error in [δ,1] ∪ [-1,-δ]
+    """
+    phases, scale_factor, sigma = get_inverse_phases(degree, kappa, buffer)
+    
+    kappa_eff = kappa * (1 + buffer)
+    delta_eff = 1 / kappa_eff
+    
+    # Sample in valid regions only
+    x_pos = np.linspace(delta_eff, 1, 10000)
+    x_neg = np.linspace(-1, -delta_eff, 10000)
+    
+    def target_func(x):
+        x_safe = np.where(np.abs(x) < 1e-15, 1e-15 * np.sign(x), x)
+        return scale_factor * (1 - np.exp(-(x_safe / sigma)**2)) / x_safe
+    
+    # Reconstruct polynomial from phases (more efficient than re-interpolating)
+    poly = Chebyshev.interpolate(target_func, deg=degree, domain=[-1, 1])
+    poly.coef[::2] = 0
+    
+    error_pos = np.max(np.abs(poly(x_pos) - target_func(x_pos)))
+    error_neg = np.max(np.abs(poly(x_neg) - target_func(x_neg)))
+    
+    return max(error_pos, error_neg)
 
 
 class myQSVT:
@@ -77,7 +227,7 @@ class myQSVT:
 
         degree = degree  # You can now set this to any odd integer
         kappa = kappa    
-        self.angles, self.tau  = get_inverse_phases(degree,kappa)
+        self.angles, self.tau, self.sigma  = get_inverse_phases(degree,kappa)
         print(f"Generated {len(self.angles)} angles for degree {degree}")
     def _validate_input(self):
         # Ensure singular values < 1
