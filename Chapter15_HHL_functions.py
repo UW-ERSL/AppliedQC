@@ -90,7 +90,7 @@ from qiskit.circuit.library import QFT, HamiltonianGate
 from qiskit.circuit.library.standard_gates.u import UGate
 from qiskit_aer import Aer
 from qiskit.circuit.library import QFTGate
-
+from Chapter08_QuantumGates_functions import simulateCircuit
 class myHHL:
 	"""
 	Hybrid HHL Algorithm Implementation
@@ -272,14 +272,6 @@ class myHHL:
 		return lambda_lower_bound, lambda_upper_bound
 
 	
-		
-	def simulateCircuit(self,circuit,nShots=1000):
-		"""Simulate quantum circuit using Qiskit Aer backend"""
-		backend = Aer.get_backend('qasm_simulator')
-		new_circuit = transpile(circuit, backend)
-		job = backend.run(new_circuit,shots = nShots)
-		counts = job.result().get_counts(circuit)
-		return counts
 
 	def constructQPECircuit(self,mode):
 		"""
@@ -520,7 +512,7 @@ class myHHL:
 		## Step 1: Run QPE to estimate eigenvalues of A
 		self.QPECircuit = self.constructQPECircuit('QPE')
 		self.QPECircuit.measure([*range(0,self.m)], [*range(0,self.m)]) 
-		self.QPECounts = self.simulateCircuit(self.QPECircuit,self.nQPEShots)
+		self.QPECounts = simulateCircuit(self.QPECircuit,shots = self.nQPEShots)
 		self.processQPECounts(self.QPECounts)
 		
 		# Step 2: Refine λ_lower estimate using QPE results
@@ -539,7 +531,7 @@ class myHHL:
 
 		# Step 3: Construct and run full HHL circuit
 		self.constructHHLCircuit()
-		self.HHLRawCounts = self.simulateCircuit(self.HHLCircuit,self.nHHLShots)
+		self.HHLRawCounts = simulateCircuit(self.HHLCircuit, shots=self.nHHLShots)
 		
 		# Step 4: Extract solution from post-selected measurements
 		if not self.extractHHLSolution():

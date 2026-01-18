@@ -110,7 +110,7 @@ def myQPESingleBit(A,v,lambdaUpper,nShots=1000):
 	
 	# Step 5: Measure ancilla to extract phase bit
 	circuit.measure([0], [0])
-	counts = simulateCircuit(circuit,nShots)
+	counts = simulateCircuit(circuit,shots=nShots)
 	print('Counts:',counts)
 	
 	# Process results
@@ -219,7 +219,7 @@ def myQPEMultiBit(A,v,lambdaUpper,m,nShots=1000):
 	circuit.draw('mpl')
 	
 	# Execute circuit and process results
-	counts = simulateCircuit(circuit,nShots)
+	counts = simulateCircuit(circuit,shots = nShots)
 	print(counts)
 	
 	# Sort by count (most frequent measurements first)
@@ -276,7 +276,7 @@ def QiskitQPEWrapper(A,v,lambdaUpper,m,nShots=1000):
 	
 	# Measure with reversed classical bit order (Qiskit convention)
 	circuit.measure( [*range(0, m)],[*range(m-1,-1,-1)])
-	counts = simulateCircuit(circuit,nShots)
+	counts = simulateCircuit(circuit,shots = nShots,method ='statevector')
 	
 	# Process and sort results
 	countsSorted = {k: v for k, v in sorted(counts.items(), 

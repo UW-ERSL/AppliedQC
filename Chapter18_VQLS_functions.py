@@ -84,7 +84,7 @@ from qiskit.circuit.library import QFTGate
 from qiskit.quantum_info import Statevector, Operator
 from qiskit.circuit.library import UnitaryGate, QFTGate
 from qiskit.circuit.library import QFT, phase_estimation, HamiltonianGate
-
+from Chapter08_QuantumGates_functions import simulateCircuit
 from qiskit.quantum_info import SparsePauliOp
 class myVQLS:
 	"""
@@ -177,14 +177,6 @@ class myVQLS:
 		xExact = scipy.linalg.solve(self.A, self.b)
 		self.uExact = xExact/np.linalg.norm(xExact)
 		
-	def simulateCircuit(self,circuit,nShots=1000):
-		"""Simulate quantum circuit using Qiskit Aer"""
-		backend = Aer.get_backend('qasm_simulator')
-		new_circuit = transpile(circuit, backend)
-		job = backend.run(new_circuit,shots = nShots)
-		counts = job.result().get_counts(circuit)
-		return counts
-
 	def computeUbMatrix(self):
 		"""
 		Compute unitary U_b that prepares state |b⟩ from |0⟩
@@ -393,13 +385,13 @@ class myVQLS:
 			# Real part
 			circ1Real = self.HadamardTestCircuit1(self.ansatzMatrix,
 										   self.PauliMatrices[j],self.UbMatrix)
-			counts = self.simulateCircuit(circ1Real,self.nShots)
+			counts = simulateCircuit(circ1Real,shots = self.nShots)
 			gReal[j] = (counts.get('0', 0)- counts.get('1', 0))/self.nShots
 			
 			# Imaginary part
 			circ1Imag = self.HadamardTestCircuit1(self.ansatzMatrix,
 										   self.PauliMatrices[j],self.UbMatrix,True)
-			counts = self.simulateCircuit(circ1Imag,self.nShots)
+			counts = simulateCircuit(circ1Imag,shots = self.nShots)
 			gImag[j] = (counts.get('0', 0)- counts.get('1', 0))/self.nShots
 		
 		# Assemble numerator: |Σ_j α_j g_j|²
@@ -419,14 +411,14 @@ class myVQLS:
 				circ2Real = self.HadamardTestCircuit2(self.ansatzMatrix, 
 													 self.PauliMatrices[j],
 													 self.PauliMatrices[k])
-				counts = self.simulateCircuit(circ2Real,self.nShots)
+				counts = simulateCircuit(circ2Real,shots = self.nShots)
 				hReal[j][k] = (counts.get('0', 0)- counts.get('1', 0))/self.nShots
 				
 				# Imaginary part
 				circ2Imag = self.HadamardTestCircuit2(self.ansatzMatrix, 
 													 self.PauliMatrices[j],
 													 self.PauliMatrices[k],True)
-				counts =  self.simulateCircuit(circ2Imag,self.nShots)
+				counts =  simulateCircuit(circ2Imag,shots = self.nShots)
 				hImag[j][k] = (counts.get('0', 0)- counts.get('1', 0))/self.nShots
 				
 		# Assemble denominator: Σ_{j,k} α_j*α_k h_{jk}
@@ -511,7 +503,7 @@ class myVQLS:
 		# Extract solution state by measuring optimized ansatz
 		self.ansatzParams = self.thetaOptimal.copy()
 		self.ansatzCircuit = self.createAnsatzCircuit(True)
-		counts = self.simulateCircuit(self.ansatzCircuit,self.nShots)
+		counts = simulateCircuit(self.ansatzCircuit, shots=self.nShots)
 		
 		# Reconstruct state from measurement statistics
 		self.uVQLS = 0

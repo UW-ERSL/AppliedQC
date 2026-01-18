@@ -38,6 +38,20 @@ def simulateCircuit(circuit, method='matrix_product_state', shots=1000,
                      do_transpile=True, noise_model=None):
     """
     Simulates a circuit (including MCX gates) with optional noise.
+    Parameters
+    ----------
+    circuit : QuantumCircuit
+        The quantum circuit to simulate.
+    method : str, optional
+        Simulation method for AerSimulator (default: 'matrix_product_state').
+        Other options: 'statevector', 'density_matrix', 'stabilizer', etc.
+    shots : int, optional
+        Number of measurement repetitions (default: 1000).
+    do_transpile : bool, optional
+        Whether to transpile the circuit before simulation (default: True).
+        Transpilation breaks down MCX into basis gates.
+    noise_model : NoiseModel, optional
+        Qiskit noise model to simulate realistic hardware noise (default: None).
     """
     # AerSimulator supports MCX natively in most methods
     simulator = AerSimulator(method=method, noise_model=noise_model)
