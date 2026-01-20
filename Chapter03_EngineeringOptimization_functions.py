@@ -40,10 +40,12 @@ class TrussFEM:
         self.n_nodes = len(nodes)
         self.n_dof = 2 * self.n_nodes
         self.L = self.compute_all_lengths()
+        self.Te = self.compute_Te()
         self.initialArea = self.A.copy()
         self.initial_volume = np.sum(self.initialArea * self.L)
         self.displacements = None
     
+
     def compute_element_length(self, i, j): 
         """Compute length of element between nodes i and j."""
         dx = self.nodes[j, 0] - self.nodes[i, 0]
@@ -56,6 +58,7 @@ class TrussFEM:
         for idx, (i, j) in enumerate(self.elements):
             lengths.append(self.compute_element_length(i, j))
         return np.array(lengths)
+    
     
     def set_area(self, A):
         """Set cross-sectional areas."""
@@ -92,6 +95,33 @@ class TrussFEM:
         ])
         return d_elem
     
+    def compute_Te(self):
+        """
+        Compute transformation matrices Te for all elements.
+        Each Te is a 4x4 matrix for mapping local to global coordinates.
+
+        Returns:
+        --------
+        Te_all : ndarray, shape (n_elements, 4, 4)
+            Array of transformation matrices for each element.
+        """
+        Te_all = np.zeros((self.n_elements, 4, 4))
+        for elem in range(self.n_elements):
+            i, j = self.elements[elem]
+            dx = self.nodes[j, 0] - self.nodes[i, 0]
+            dy = self.nodes[j, 1] - self.nodes[i, 1]
+            L = self.L[elem]
+            c = dx / L
+            s = dy / L
+            Te = np.array([
+                [ c*c,  c*s, -c*c, -c*s],
+                [ c*s,  s*s, -c*s, -s*s],
+                [-c*c, -c*s,  c*c,  c*s],
+                [-c*s, -s*s,  c*s,  s*s]
+            ])
+            Te_all[elem] = Te
+        return Te_all
+    
     def get_element_stiffness_matrix(self, elem):
         """
         Compute element stiffness matrix in global coordinates.
@@ -108,28 +138,10 @@ class TrussFEM:
         L : float
             Element length
         """
-        # Element geometry
-        i, j = self.elements[elem]
-        dx = self.nodes[j, 0] - self.nodes[i, 0]
-        dy = self.nodes[j, 1] - self.nodes[i, 1]
-        L = np.sqrt(dx**2 + dy**2)
-        
-        if L < 1e-10:
-            raise ValueError(f"Degenerate element: nodes {i} and {j} coincide")
-        
-        # Direction cosines
-        c = dx / L
-        s = dy / L
-        
-        # Element stiffness in global coordinates
-        k = self.E * self.A[elem] / L
-        K_elem = k * np.array([
-            [ c*c,  c*s, -c*c, -c*s],
-            [ c*s,  s*s, -c*s, -s*s],
-            [-c*c, -c*s,  c*c,  c*s],
-            [-c*s, -s*s,  c*s,  s*s]
-        ])
-        
+        # Use precomputed transformation matrix Te
+        Te = self.Te[elem]
+        k = self.E * self.A[elem] / self.L[elem]
+        K_elem = k * Te
         return K_elem
     
     def assemble_stiffness(self):
@@ -155,10 +167,8 @@ class TrussFEM:
             # Global DOF indices for this element
             dofs = [2*i, 2*i+1, 2*j, 2*j+1]
             
-            # Add element contribution to global matrix
-            for a in range(4):
-                for b in range(4):
-                    K[dofs[a], dofs[b]] += K_elem[a, b]
+            # Vectorized element contribution to global matrix
+            K[np.ix_(dofs, dofs)] += K_elem
         
         return K
     
