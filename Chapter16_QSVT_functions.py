@@ -16,6 +16,28 @@ import numpy as np
 import matplotlib.pyplot as plt
 from numpy.polynomial import Chebyshev
 
+def convert_qiskit_to_reflection(qiskit_phases):
+    """
+    Converts Qiskit 'Wz' convention phases to the Reflection convention 
+    used in the Sünderhauf / Gilyén papers.
+    """
+    phases = np.array(qiskit_phases)
+    d = len(phases) - 1  # Degree of polynomial
+    reflection_phases = np.zeros_like(phases)
+    
+    # 1. First angle adjustment
+    reflection_phases[0] = phases[0] + np.pi/4
+    
+    # 2. Middle angles adjustment
+    for j in range(1, d):
+        reflection_phases[j] = phases[j] + np.pi/2
+        
+    # 3. Last angle adjustment
+    reflection_phases[d] = phases[d] + np.pi/4
+    
+    # Normalize phases to be within [-pi, pi]
+    return (reflection_phases + np.pi) % (2 * np.pi) - np.pi
+
 def plot_approximation_comparison(degree, kappa):
     """Visualization showing how δ/x blows up near the singularity."""
     phases, scale_factor, sigma = get_inverse_phases(degree, kappa, buffer=0)

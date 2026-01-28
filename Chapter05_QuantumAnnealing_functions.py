@@ -44,7 +44,7 @@ Notation matches the LaTeX formulation:
 def print_QUBO_best_result(results,method_name = " "):
     variables = list(results.variables)
     print(method_name + " q values:", [int(results.first.sample[v]) for v in variables])
-    print(method_name + " Lowest Energy:", results.first.energy)
+    print(method_name + f" Lowest Energy: {results.first.energy:3g}")
     
 class QATrussOptimizer:
     """
