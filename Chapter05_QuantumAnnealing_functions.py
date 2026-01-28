@@ -424,7 +424,6 @@ class QATrussOptimizer:
         print(f"  Volume: {final_metrics['volume']:.4f} m³ (target: {self.V_bar:.4f})")
         print(f"  Active members: {np.sum(self.A > 100*self.A_min)}/{self.n_elements}")
         print(f"  Area range: [{self.A.min():.4e}, {self.A.max():.4e}] m²")
-        print(f"  Feasible: {final_metrics['feasible']}")
         print(f"{'='*70}")
         
         # Package results

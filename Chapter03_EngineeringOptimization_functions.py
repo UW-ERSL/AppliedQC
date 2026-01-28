@@ -423,7 +423,6 @@ class TrussFEM:
                 'volume': np.inf,
                 'max_disp': np.inf,
                 'max_stress': np.inf,
-                'feasible': False,
                 'compliance': np.inf
             }
         
@@ -433,25 +432,11 @@ class TrussFEM:
         max_stress = np.max(np.abs(stresses))
         compliance = self.loads @ d
         
-        desiredVolume = desiredVolumeFraction*self.initial_volume   
-        # Count connected nodes (nodes with at least one active member)
-        connected_nodes = set()
-        for idx, (i, j) in enumerate(self.elements):
-            if self.A[idx] > 0:
-                connected_nodes.add(i)
-                connected_nodes.add(j)
-        n_connected = len(connected_nodes)
-        
-        # Minimum members for connected structure: 2n - 3 (2D truss)
-        min_members_required = max(1, 2 * n_connected - 3)
-        feasible = ( np.sum(self.A > 0) >= min_members_required and
-                volume <= desiredVolume) # can add more constraints here
-        
+    
         metrics = {
             'volume': volume,
             'max_disp': max_disp,
             'max_stress': max_stress,
-            'feasible': feasible,
             'compliance': compliance
         }
          
@@ -471,7 +456,6 @@ class TrussFEM:
         print(f"  Max displacement: {metrics['max_disp']:.4g} m")
         print(f"  Max stress: {metrics['max_stress']:.3g} Pa")
         print(f"  Compliance: {metrics['compliance']:.3g} J")
-        print(f"  Feasible: {metrics['feasible']}")
 
     def plot_truss(self, design=None, 
                displacements=None,
@@ -1010,7 +994,6 @@ class PlaneStressFEM:
             'compliance': self.compliance,
             'volume': volume,
             'volume_fraction': np.mean(self.xi),
-            'feasible': True
         }
     
     def print_metrics(self, metrics):
@@ -1020,7 +1003,6 @@ class PlaneStressFEM:
         print(f"  Compliance: {metrics['compliance']:.4g}")
         print(f"  Volume: {metrics['volume']:.4g}")
         print(f"  Volume fraction: {metrics['volume_fraction']:.4f}")
-        print(f"  Feasible: {metrics['feasible']}")
 
     def plot_mesh(self, show_bc=True, show_loads=True, ax=None):
         """Plot the mesh, boundary conditions, and loads (undeformed)"""
