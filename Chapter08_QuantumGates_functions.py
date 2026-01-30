@@ -34,7 +34,35 @@ from qiskit_ibm_runtime import QiskitRuntimeService
 from qiskit_ibm_runtime import SamplerV2 as Sampler
 from qiskit.transpiler.preset_passmanagers import generate_preset_pass_manager
 
-def simulateCircuit(circuit, method='matrix_product_state', shots=1000, 
+def simulate_statevector(circuit):
+    """
+    Simulate circuit and return full statevector (preserves phases).
+    Circuit must NOT have measurements.
+    """
+    
+    # Remove measurements if present
+    circuit_no_measure = circuit.remove_final_measurements(inplace=False)
+    simulator = AerSimulator(method='statevector')
+    job = simulator.run(circuit_no_measure)
+    return job.result().get_statevector()
+
+
+def simulate_measurements(circuit, shots=1000, noise_model=None):
+    """
+    Simulate circuit and return measurement counts.
+    Circuit must have measurements.
+    """
+    
+    if not circuit.num_clbits:
+        raise ValueError("Circuit must have measurements for sampling")
+    
+    simulator = AerSimulator(noise_model=noise_model)
+    circuit_transpiled = transpile(circuit, simulator)
+    job = simulator.run(circuit_transpiled, shots=shots)
+    return job.result().get_counts()
+
+
+def simulateCircuitRemoved(circuit, method='matrix_product_state', shots=1000, 
                      do_transpile=True, noise_model=None):
     """
     Simulates a circuit (including MCX gates) with optional noise.
