@@ -452,10 +452,10 @@ class TrussFEM:
         metrics : dict
             Performance metrics dictionary
         """
-        print(f"  Volume: {metrics['volume']:.3g} m^3")
-        print(f"  Max displacement: {metrics['max_disp']:.4g} m")
-        print(f"  Max stress: {metrics['max_stress']:.3g} Pa")
-        print(f"  Compliance: {metrics['compliance']:.3g} J")
+        print(f"  Volume: {metrics['volume']:.3g}")
+        print(f"  Max displacement: {metrics['max_disp']:.4g}")
+        print(f"  Max stress: {metrics['max_stress']:.3g}")
+        print(f"  Compliance: {metrics['compliance']:.3g}")
 
     def plot_truss(self, design=None, 
                displacements=None,

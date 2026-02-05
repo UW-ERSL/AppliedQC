@@ -13,7 +13,64 @@ from collections import defaultdict
 from qiskit import QuantumCircuit, transpile
 from qiskit_aer import Aer, StatevectorSimulator
 from qiskit import QuantumCircuit, QuantumRegister, ClassicalRegister, transpile
-from Chapter08_QuantumGates_functions import simulateCircuit #type: ignore
+from Chapter08_QuantumGates_functions import simulate_measurements #type: ignore
+from qiskit import QuantumCircuit, QuantumRegister, ClassicalRegister, transpile
+from qiskit.quantum_info import Statevector, Operator
+from qiskit.circuit.library import UnitaryGate, QFTGate
+from qiskit.circuit.library import QFT, phase_estimation, HamiltonianGate
+from qiskit.quantum_info import SparsePauliOp
+from qiskit.circuit.library import  StatePreparation,DiagonalGate, ZGate, XGate
+
+def PrepSelectUnprep(A,x):
+    # Pauli decomposition
+    pauli_split = SparsePauliOp.from_operator(A)
+    coeffs = pauli_split.coeffs
+    alpha = np.sum(np.abs(coeffs))
+
+    L = len(coeffs)
+    num_ancilla = int(np.ceil(np.log2(L)))
+    num_system = int(np.ceil(np.log2(A.shape[0])))
+
+    # System register first (LSB, top wire), ancilla second (MSB, bottom wire)
+    qr_sys = QuantumRegister(num_system, 's')
+    qr_anc = QuantumRegister(num_ancilla, 'a')
+    qc = QuantumCircuit(qr_sys, qr_anc)
+
+    # PREP (on ancilla)
+    prep_vec = np.pad(np.sqrt(np.abs(coeffs) / alpha), (0, 2**num_ancilla - L))
+    qc.append(StatePreparation(prep_vec, label='Prep'), qr_anc)
+
+    # Diagonal phase gate (on ancilla)
+    diag = np.ones(2**num_ancilla, dtype=complex)
+    diag[:L] = np.exp(1j * np.angle(coeffs))
+    qc.append(DiagonalGate(diag), qr_anc)
+
+    # SELECT (controlled Paulis)
+    # Important: qubits are specified as [control, target]
+    # With system as LSB, ancilla as MSB
+    for i, pauli in enumerate(pauli_split.paulis):
+        ctrl_gate = pauli.to_instruction().control(
+            num_ancilla,
+            ctrl_state=format(i, f'0{num_ancilla}b')
+        )
+        # Ancilla controls system: [anc, sys]
+        qc.append(ctrl_gate, [*qr_anc, *qr_sys])
+
+    # UNPREP (inverse on ancilla)
+    qc.append(StatePreparation(prep_vec, label='Prep').inverse(), qr_anc)
+
+    # 4. Simulate
+    # Initial state: |x>_sys ⊗ |0>_anc
+    # Since sys is first (LSB), we do Statevector(x).expand(ancilla_state)
+    initial_state = Statevector(x).expand(Statevector.from_label('0' * num_ancilla))
+    final_statevector = initial_state.evolve(qc)
+
+    # Post-select: ancilla = |0...0> (MSB = 0)
+    # With system as LSB (2 qubits) and ancilla as MSB (3 qubits):
+    # State vector ordering: |s1 s0 a2 a1 a0>
+    res_vector = final_statevector.data[:2**num_system] * alpha
+    return qc, res_vector
+
 
 def ryMatrix(alpha):
 	return np.array([[np.cos(alpha/2), -np.sin(alpha/2)], [np.sin(alpha/2), np.cos(alpha/2)]])
@@ -102,12 +159,12 @@ def hadamard_inner_product(y_prep, x_prep, shots, backend=None, isreal=False):
     ht_real = hadamard_test_circuit(u_gate, y_prep.to_gate(), complex_test=False)
     
     if isreal:
-        counts_real = simulateCircuit(ht_real, shots= shots)
+        counts_real = simulate_measurements(ht_real, shots= shots)
         return hadamard_test_expval(counts_real)
     else:
         ht_imag = hadamard_test_circuit(u_gate, y_prep.to_gate(), complex_test=True)
-        counts_real = simulateCircuit(ht_real, shots= shots)
-        counts_imag = simulateCircuit(ht_imag, shots= shots)
+        counts_real = simulate_measurements(ht_real, shots= shots)
+        counts_imag = simulate_measurements(ht_imag, shots= shots)
         
         real_part = hadamard_test_expval(counts_real)
         imag_part = hadamard_test_expval(counts_imag)
@@ -191,7 +248,7 @@ def inner_product_estimation(se_unit_vector, test_unit_vector, shots = 10000):
 
     qc.measure(q_aux, c_res)
     # Simulate circuit
-    counts = simulateCircuit(qc, shots= shots )
+    counts = simulate_measurements(qc, shots= shots )
     
     # Calculate |<s|x>|^2
     p0 = counts.get('0', 0) / shots
