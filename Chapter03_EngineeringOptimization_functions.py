@@ -1,11 +1,296 @@
 import numpy as np
 import matplotlib.pyplot as plt
+import matplotlib.pyplot as plt
 import time
 from scipy.sparse import coo_matrix, csr_matrix
 from scipy.sparse.linalg import spsolve
 from scipy.optimize import minimize
+from scipy.sparse import diags
+from scipy.sparse import diags, kron, eye
+from scipy.sparse import lil_matrix
+class Poisson1DFD:
+    def __init__(self, n_elements, f= 1, length=1.0):
+        """
+        1D Poisson equation FEM model
+        
+        Parameters:
+        -----------
+        n_elements : int
+            Number of finite elements
+        f : float or array-like
+            Source term (right-hand side)
+        length : float
+            Length of the domain
+        """
+        self.n_elements = n_elements
+        self.length = length
+        self.n_nodes = n_elements + 1
+        self.node_coords = np.linspace(0, length, self.n_nodes)
+        self.h = length / n_elements
+        self.f = f* np.ones(self.n_nodes)
+        self.fixed_dofs = [0, self.n_nodes - 1]  # Dirichlet BCs at both ends
+    
+    def assemble_stiffness(self):
+        """Assemble global stiffness matrix."""
+        # K = 2 * np.eye(self.n_nodes)
+        # for i in range(self.n_nodes - 1):
+        #     K[i, i+1] = -1
+        #     K[i+1, i] = -1
+        diagonals = [2 * np.ones(self.n_nodes), -1 * np.ones(self.n_nodes-1), -1 * np.ones(self.n_nodes-1)]
+        K = diags(diagonals, [0, 1, -1], format='csr')
+        return K
 
+    def solve(self):
+        """Solve the FEM system."""
+        K = self.assemble_stiffness()
+        rhs = (self.h **2) * self.f.copy()
+        
+        # Apply boundary conditions
+        free_dofs = list(set(range(self.n_nodes)) - set(self.fixed_dofs))
+        
+        K_ff = K[np.ix_(free_dofs, free_dofs)]
+        f_f = rhs[free_dofs]
+        
+        u_f = spsolve(K_ff, f_f)
 
+        u = np.zeros(self.n_nodes)
+        u[free_dofs] = u_f
+        return u
+    def plot_solution(self, u):
+        """Plot the solution."""
+        plt.figure(figsize=(8, 5))
+        plt.plot(self.node_coords, u, marker='o')
+        plt.title(f'1D Poisson FD Solution (max = {np.max(u):.4f})')
+        plt.xlabel('x')
+        plt.ylabel('u(x)')
+        plt.grid(True)
+        plt.show()
+
+class Poisson2DFD:
+
+    def __init__(self, nx, ny, f=1.0, Lx=1.0, Ly=1.0):
+        """
+        2D Poisson equation: -∇²u = f with homogeneous Dirichlet BC
+        
+        Parameters:
+        -----------
+        nx, ny : int
+            Number of interior grid points in x and y
+        """
+        self.nx = nx
+        self.ny = ny
+        self.Lx = Lx
+        self.Ly = Ly
+        self.hx = Lx / (nx + 1)  # uniform spacing in x
+        self.hy = Ly / (ny + 1)  # uniform spacing in y
+        self.n_interior = nx * ny
+        
+        # Create a grid of interior coordinates
+        x = np.linspace(self.hx, self.Lx - self.hx, nx)
+        y = np.linspace(self.hy, self.Ly - self.hy, ny)
+
+        # meshgrid creates the 2D layout; 'ij' indexing matches your (i, j) lexicographic order
+        X, Y = np.meshgrid(x, y, indexing='ij')
+
+        # Flatten to match the vector u (nx * ny, 2)
+        self.coords = np.column_stack((X.ravel(), Y.ravel()))
+        
+        # Source term
+        if callable(f):
+            self.f = np.array([f(x, y) for x, y in self.coords])
+        else:
+            self.f = f * np.ones(self.n_interior)
+    
+    def assemble_stiffness(self):
+        """Assemble stiffness matrix (interior nodes only)."""
+        Nx, Ny = self.nx, self.ny
+        
+        # Grid spacing ratio
+        r = self.hx**2 / self.hy**2
+        
+        # 1D tridiagonal with anisotropic diagonal
+        T = diags([2*(1+r)*np.ones(Nx), -np.ones(Nx-1), -np.ones(Nx-1)], 
+                  [0, 1, -1], format='csr')
+        I_x = eye(Nx, format='csr')
+        I_y = eye(Ny, format='csr')
+        
+        # 2D Laplacian with anisotropic coupling
+        K = kron(I_y, T) + kron(diags([-r*np.ones(Ny-1), -r*np.ones(Ny-1)], 
+                                      [1, -1], format='csr'), I_x)
+        return K
+    
+    def solve(self):
+        """Solve -∇²u = f."""
+        K = self.assemble_stiffness()
+        rhs = (self.hx * self.hy) * self.f
+        u = spsolve(K, rhs)
+        return u 
+
+    def plot_solution(self, u, title='2D Poisson Solution', save_path=None):
+        """
+        Plot the solution of 2D Poisson equation.
+        
+        Parameters:
+        -----------
+        u : array-like
+            Solution vector (interior nodes only)
+        title : str
+            Title for the plots
+        save_path : str, optional
+            Path to save the figure
+        """
+
+        
+        # Create full grid including boundaries (u=0)
+        U_full = np.zeros((self.ny + 2, self.nx + 2))
+        U_full[1:-1, 1:-1] = u.reshape(self.ny, self.nx)
+        
+        # Create coordinate meshes
+        x = np.linspace(0, self.Lx, self.nx + 2)
+        y = np.linspace(0, self.Ly, self.ny + 2)
+        X, Y = np.meshgrid(x, y)
+        
+        # Create figure with subplots
+        fig = plt.figure(figsize=(16, 5))
+        levels = 30
+        contour = plt.contourf(X, Y, U_full, levels=levels, cmap='viridis')
+        plt.contour(X, Y, U_full, levels=levels, colors='black', 
+                    linewidths=0.5, alpha=0.3)
+        plt.xlabel('x', fontsize=10)
+        plt.ylabel('y', fontsize=10)
+        plt.title(f'2D Poisson FD Solution (max = {np.max(u):.4f})')
+        plt.gca().set_aspect('equal')
+        fig.colorbar(contour, ax=plt.gca())
+        plt.tight_layout()
+        plt.show()
+
+class Poisson2DFE:
+
+    def __init__(self, nx, ny, f=1.0, Lx=1.0, Ly=1.0):
+        """
+        2D Poisson equation: -∇²u = f with homogeneous Dirichlet BC using FEM
+        
+        Parameters:
+        -----------
+        nx, ny : int
+            Number of elements in x and y directions
+        """
+        self.nx = nx  # number of elements in x
+        self.ny = ny  # number of elements in y
+        self.Lx = Lx
+        self.Ly = Ly
+        self.hx = Lx / nx  # element size in x
+        self.hy = Ly / ny  # element size in y
+        
+        # Total number of nodes (including boundary)
+        self.n_nodes_x = nx + 1
+        self.n_nodes_y = ny + 1
+        self.n_nodes = self.n_nodes_x * self.n_nodes_y
+        
+        # Number of interior nodes
+        self.n_interior_x = nx - 1
+        self.n_interior_y = ny - 1
+        self.n_interior = self.n_interior_x * self.n_interior_y
+        
+        # Create node coordinates
+        x = np.linspace(0, self.Lx, self.n_nodes_x)
+        y = np.linspace(0, self.Ly, self.n_nodes_y)
+        X, Y = np.meshgrid(x, y, indexing='ij')
+        self.all_coords = np.column_stack((X.ravel(), Y.ravel()))
+        
+        # Interior node coordinates (excluding boundaries)
+        x_int = np.linspace(self.hx, self.Lx - self.hx, self.n_interior_x)
+        y_int = np.linspace(self.hy, self.Ly - self.hy, self.n_interior_y)
+        X_int, Y_int = np.meshgrid(x_int, y_int, indexing='ij')
+        self.coords = np.column_stack((X_int.ravel(), Y_int.ravel()))
+        
+        # Build interior node indices
+        interior_nodes = []
+        for i in range(1, self.nx):
+            for j in range(1, self.ny):
+                interior_nodes.append(self.node_index(i, j))
+        self.interior_nodes = np.array(interior_nodes)
+        # Source term (evaluated at all nodes for assembly)
+        if callable(f):
+            self.f = np.array([f(x, y) for x, y in self.coords])
+        else:
+            self.f = f * np.ones(self.n_interior)
+    
+    def node_index(self, i, j):
+        """Convert 2D node indices to global node number."""
+        return i * self.n_nodes_y + j
+    
+    def assemble_stiffness(self):
+        """Assemble stiffness matrix (interior nodes only) using Kronecker product approach."""
+        Nx, Ny = self.n_interior_x, self.n_interior_y
+        
+        hx = self.hx
+        hy = self.hy
+        
+        # 1D stiffness matrix: K1D_x with entries k_ij = ∫ φ'_i φ'_j dx
+        Kx = (1.0/hx) * diags([2*np.ones(Nx), -np.ones(Nx-1), -np.ones(Nx-1)], 
+                            [0, 1, -1], format='csr')
+        Ky = (1.0/hy) * diags([2*np.ones(Ny), -np.ones(Ny-1), -np.ones(Ny-1)], 
+                            [0, 1, -1], format='csr')
+        
+        # 1D mass matrix: M1D with entries m_ij = ∫ φ_i φ_j dx
+        Mx = (hx/6.0) * diags([4*np.ones(Nx), np.ones(Nx-1), np.ones(Nx-1)], 
+                            [0, 1, -1], format='csr')
+        My = (hy/6.0) * diags([4*np.ones(Ny), np.ones(Ny-1), np.ones(Ny-1)], 
+                            [0, 1, -1], format='csr')
+        
+        # 2D stiffness: ∫∫ (∂u/∂x·∂v/∂x + ∂u/∂y·∂v/∂y) dxdy
+        # K2D = My ⊗ Kx + Ky ⊗ Mx
+        K = kron(My, Kx) + kron(Ky, Mx)
+        
+        return K
+    
+    def solve(self):
+        """Solve -∇²u = f using FEM."""
+        K = self.assemble_stiffness()
+        rhs = (self.hx * self.hy) * self.f
+        u_interior = spsolve(K, rhs)
+        
+        # Create full solution vector (including boundaries)
+        u_full = np.zeros(self.n_nodes)
+        u_full[self.interior_nodes] = u_interior
+        
+        return u_full
+    
+    def plot_solution(self, u, title='2D Poisson FEM Solution', save_path=None):
+        """
+        Plot the solution of 2D Poisson equation.
+        
+        Parameters:
+        -----------
+        u : array-like
+            Solution vector (all nodes including boundaries)
+        title : str
+            Title for the plots
+        save_path : str, optional
+            Path to save the figure
+        """
+        # Reshape solution to 2D grid
+        U_grid = u.reshape(self.n_nodes_x, self.n_nodes_y)
+        
+        # Create coordinate meshes
+        x = np.linspace(0, self.Lx, self.n_nodes_x)
+        y = np.linspace(0, self.Ly, self.n_nodes_y)
+        X, Y = np.meshgrid(x, y)
+        
+        # Create figure
+        fig = plt.figure(figsize=(16, 5))
+        levels = 30
+        contour = plt.contourf(X, Y, U_grid.T, levels=levels, cmap='viridis')
+        plt.contour(X, Y, U_grid.T, levels=levels, colors='black', 
+                    linewidths=0.5, alpha=0.3)
+        plt.xlabel('x', fontsize=10)
+        plt.ylabel('y', fontsize=10)
+        plt.title(f'{title} (max = {np.max(u):.4f})')
+        plt.gca().set_aspect('equal')
+        fig.colorbar(contour, ax=plt.gca())
+        plt.tight_layout()
+        plt.show()
 
 class TrussFEM:
     def __init__(self, nodes, elements,loads, fixed_dofs, E=200e9, A=0.0005):
