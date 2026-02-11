@@ -713,7 +713,7 @@ class TrussFEM:
         
         stresses = self.compute_stresses(d)
         volume = self.compute_volume()
-        max_disp = np.max(np.abs(d))
+        max_disp = np.max(np.sqrt(d[0::2]**2 + d[1::2]**2))
         max_stress = np.max(np.abs(stresses))
         compliance = self.loads @ d
         
