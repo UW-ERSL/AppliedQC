@@ -47,7 +47,7 @@ def simulate_statevector(circuit):
     return job.result().get_statevector()
 
 
-def simulate_measurements(circuit, shots=1000, noise_model=None):
+def simulate_measurements(circuit, shots, noise_model=None):
     """
     Simulate circuit and return measurement counts.
     Circuit must have measurements.
@@ -61,41 +61,11 @@ def simulate_measurements(circuit, shots=1000, noise_model=None):
     job = simulator.run(circuit_transpiled, shots=shots)
     return job.result().get_counts()
 
+def UniversalOperator(theta,phi,lambdaAngle):
+	U = np.array([[np.cos(theta/2),-np.exp(1j*lambdaAngle)*np.sin(theta/2)],
+			      [np.exp(1j*phi)*np.sin(theta/2), np.exp(1j*(phi+lambdaAngle))*np.cos(theta/2)]])
+	return U
 
-def simulateCircuitRemoved(circuit, method='matrix_product_state', shots=1000, 
-                     do_transpile=True, noise_model=None):
-    """
-    Simulates a circuit (including MCX gates) with optional noise.
-    Parameters
-    ----------
-    circuit : QuantumCircuit
-        The quantum circuit to simulate.
-    method : str, optional
-        Simulation method for AerSimulator (default: 'matrix_product_state').
-        Other options: 'statevector', 'density_matrix', 'stabilizer', etc.
-    shots : int, optional
-        Number of measurement repetitions (default: 1000).
-    do_transpile : bool, optional
-        Whether to transpile the circuit before simulation (default: True).
-        Transpilation breaks down MCX into basis gates.
-    noise_model : NoiseModel, optional
-        Qiskit noise model to simulate realistic hardware noise (default: None).
-    """
-    # AerSimulator supports MCX natively in most methods
-    simulator = AerSimulator(method=method, noise_model=noise_model)
-    
-    # We must transpile if there is noise, otherwise MCX stays as one high-level block
-    should_transpile = do_transpile or (noise_model is not None)
-    
-    if should_transpile:
-        # Transpilation breaks MCX into basis gates (CX, SX, RZ, etc.)
-        input_circuit = transpile(circuit, simulator)
-    else:
-        # High-level simulation: MCX is treated as a single large unitary matrix
-        input_circuit = circuit
-        
-    job = simulator.run(input_circuit, shots=shots)
-    return job.result().get_counts()
 
 def analyzeCircuitForSimulator(circuit, method='matrix_product_state', shots=1000, noise_model=None):
     """
