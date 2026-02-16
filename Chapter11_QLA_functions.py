@@ -3,12 +3,12 @@ Chapter 11: Quantum Linear Algebra (QLA) Functions
 """
 
 import numpy as np
-from qiskit import QuantumCircuit, QuantumRegister
 from qiskit.quantum_info import Statevector, Operator
 from qiskit.quantum_info import SparsePauliOp
 from qiskit.circuit.library import  StatePreparation,DiagonalGate
 from qiskit.circuit import ClassicalRegister
 from qiskit.circuit.library.standard_gates import PhaseGate
+from qiskit import QuantumCircuit, QuantumRegister, ClassicalRegister
 
 def LCU_Ax(A, x, mode='statevector'):
     """Implements the LCU method to compute A|x> via Prep-Select-Unprep framework.
@@ -22,9 +22,7 @@ def LCU_Ax(A, x, mode='statevector'):
         qc (QuantumCircuit): Quantum circuit implementing the LCU
         metadata (dict): Contains alpha, num_system, num_ancilla, initial_state
     """
-    from qiskit import QuantumCircuit, QuantumRegister, ClassicalRegister
-    from qiskit.quantum_info import Statevector, SparsePauliOp
-    from qiskit.circuit.library import StatePreparation
+
     
     # Pauli decomposition
     pauli_split = SparsePauliOp.from_operator(A)

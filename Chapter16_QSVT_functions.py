@@ -657,12 +657,12 @@ Consider preconditioning or alternative algorithms for such cases.
 
 if __name__ == "__main__":
     # You can run individual examples or the full test suite
-    run_individual_example = False  # Set to True to run single example
+    run_individual_example = True  # Set to True to run single example
     
     if run_individual_example:
         # Single example mode
         print("\n--- Running Single Example ---")
-        example = 1
+        example = 3
         
         if example == 1:
             print("\n--- Testing 2x2 ---")
@@ -680,6 +680,15 @@ if __name__ == "__main__":
             b = np.array([1, 0, 0, 1])
             b = b / np.linalg.norm(b)
             kappa = 1.1*np.linalg.cond(A)
+        elif example == 3:
+            print("\n--- Testing Tri-Diagonal ---")
+            N = 2**3
+            A = np.diag(np.full(N, 2)) + np.diag(np.full(N-1, -1), k=1) + np.diag(np.full(N-1, -1), k=-1)
+            A = A/4 # Scale to ensure singular values < 1
+            b = np.ones(N)
+            b = b / np.linalg.norm(b)
+            kappa = 1.1*np.linalg.cond(A)
+        print(f"Condition number κ: {kappa:.2f}")
 
         target_error = 0.01
         solver = myQSVT(A, b, kappa=kappa, target_error=target_error)
