@@ -90,3 +90,17 @@ def LCU_Ax(A, x, mode='statevector'):
     }
     
     return qc, metadata
+
+def Pauli_Block_Encoding(A, mode='statevector'):
+    """Constructs a block-encoding of a Hermitian operator A using Pauli decomposition.
+    
+    Args:
+        A (Operator): Hermitian operator    
+    Returns:
+        qc (QuantumCircuit): Quantum circuit implementing the block-encoding        
+    """
+    x = np.zeros(A.shape[0])# dummy
+    x[0] = 1.0  # |0> state
+    qc, metadata = LCU_Ax(A, x, mode=mode)
+    U_matrix = Operator(qc).data
+    return U_matrix, metadata

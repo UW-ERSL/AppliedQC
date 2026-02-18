@@ -19,323 +19,332 @@ def Wx_to_reflection_phases(phases_wx):
     else:
         phases_ref[-1] -= np.pi/4
     return phases_ref
+import numpy as np
+import scipy
+import math
+import matplotlib.pyplot as plt
+from qiskit import QuantumCircuit, transpile, QuantumRegister, ClassicalRegister
+from qiskit_aer import Aer
+from qiskit.quantum_info import Statevector, Operator
+from numpy.polynomial import Chebyshev
+from pyqsp.angle_sequence import QuantumSignalProcessingPhases
 
+# ==============================================================================
+# CONVENTION NOTES  (read before modifying)
+# ==============================================================================
+#
+# pyqsp  signal_operator="Wx"  uses the ROTATION signal unitary:
+#
+#   W(x) = [[ x,           i*sqrt(1-x^2) ],    <- unitary, (0,0) elem = x
+#            [ i*sqrt(1-x^2),  x          ]]
+#
+# and the DIAGONAL phase gate:
+#
+#   P(phi) = diag( e^{i*phi},  e^{-i*phi} )
+#
+# The QSP sequence is:  U = P(phi_0) W(x) P(phi_1) W(x) ... W(x) P(phi_d)
+# and for an ODD polynomial p(x):  Re( U[0,0] ) = p(x).
+#
+# ── Block encoding ─────────────────────────────────────────────────────────
+# To match the Wx rotation signal, the (2N x 2N) block encoding must be:
+#
+#   U_BE = [[ A,              i*sqrt(I - A A†) ],
+#            [ i*sqrt(I - A†A),     A†          ]]
+#
+# Note the i factors and the +A† (not -A†) in the bottom-right corner.
+# This ensures that, for each singular value sigma_i, the effective 2x2
+# block is exactly W(sigma_i).
+#
+# ── Phase gate in Qiskit ───────────────────────────────────────────────────
+# Qiskit's  Rz(theta) = diag( e^{-i*theta/2},  e^{+i*theta/2} )
+# We need   P(phi)    = diag( e^{+i*phi},       e^{-i*phi}     )
+# => use    qc.rz(-2*phi, ancilla)     (Z-rotation, NOT X-rotation)
+#
+# ── Statevector extraction ─────────────────────────────────────────────────
+# Circuit: QuantumCircuit(q_anc, q_data)
+# Qiskit statevector ordering: |data[n-1]...data[0], anc[0]>
+#   => index k = data_idx * 2 + anc_bit
+# Post-select ancilla=0: sv.data[0::2]  (even indices, data order preserved)
+# The solution direction is in the REAL PART of the extracted amplitudes.
+#
+# ==============================================================================
+# Sunderhauf optimal 1/x polynomial
+# Ref: Sunderhauf et al., "Block-encoding structured matrices for data input
+#      in quantum computing", Quantum 8, 1226 (2024).
+# ==============================================================================
 class SunderhaufPolynomial:
-    """Class for computing optimal polynomial approximating 1/x"""
-    
+    """Optimal odd Chebyshev polynomial approximating 1/x on [a, 1]."""
+
     @staticmethod
     def helper_Lfrac(n: int, x: float, a: float) -> float:
-        """Compute mathcal{L}_n(x; a)"""
-        alpha = (1+a)/(2*(1-a))
-        l1 = (x + (1-a)/(1+a)) / alpha
-        l2 = (x**2 + (1-a)/(1+a) * x / 2 - 1/2) / alpha**2
+        """Three-term recurrence for L_n(x; a)."""
+        alpha = (1 + a) / (2 * (1 - a))
+        l1 = (x + (1 - a) / (1 + a)) / alpha
+        l2 = (x**2 + (1 - a) / (1 + a) * x / 2 - 0.5) / alpha**2
         if n == 1:
             return l1
-        for _ in range(3, n+1):
+        for _ in range(3, n + 1):
             l1, l2 = l2, x * l2 / alpha - l1 / (4 * alpha**2)
         return l2
 
     @staticmethod
     def helper_P(x: float, n: int, a: float) -> float:
-        """Compute values of the polynomial P_(2n-1)(x; a)"""
-        return (1 - (-1)**n * (1+a)**2 / (4*a) * SunderhaufPolynomial.helper_Lfrac(n, (2 * x**2 - (1 + a**2))/(1-a**2), a))/x
+        return (
+            1
+            - (-1)**n * (1 + a)**2 / (4 * a)
+            * SunderhaufPolynomial.helper_Lfrac(
+                n, (2 * x**2 - (1 + a**2)) / (1 - a**2), a)
+        ) / x
 
     @staticmethod
-    def poly(d: int, a: float) -> np.polynomial.Chebyshev:
-        """Returns Chebyshev polynomial for optimal polynomial
-        
-        Args:
-            d (int): odd degree
-            a (float): 1/kappa for range [a,1]"""
+    def poly(d: int, a: float) -> Chebyshev:
         if d % 2 == 0:
             raise ValueError("d must be odd")
         coef = np.polynomial.chebyshev.chebinterpolate(
-            SunderhaufPolynomial.helper_P, d, args=((d+1)//2, a))
-        coef[0::2] = 0  # force even coefficients exactly zero
-        return np.polynomial.Chebyshev(coef)
+            SunderhaufPolynomial.helper_P, d, args=((d + 1) // 2, a))
+        coef[0::2] = 0          # enforce odd parity exactly
+        return Chebyshev(coef)
 
     @staticmethod
     def error_for_degree(d: int, a: float) -> float:
-        """Returns the poly error for degree d and a=1/kappa"""
-        if d % 2 == 0:
-            raise ValueError("d must be odd")
-        n = (d+1)//2
-        return (1-a)**n / (a * (1+a)**(n-1))
+        n = (d + 1) // 2
+        return (1 - a)**n / (a * (1 + a)**(n - 1))
 
     @staticmethod
     def mindegree(epsilon: float, a: float) -> int:
-        """Returns the minimum degree d for a poly with error epsilon, a=1/kappa"""
-        n = math.ceil((np.log(1/epsilon) + np.log(1/a) + np.log(1+a))
-                      / np.log((1+a) / (1-a)))
-        return 2*n-1
+        n = math.ceil(
+            (np.log(1 / epsilon) + np.log(1 / a) + np.log(1 + a))
+            / np.log((1 + a) / (1 - a))
+        )
+        return 2 * n - 1
 
 
+# ==============================================================================
+# QSVT linear solver
+# ==============================================================================
 class myQSVT:
-    def __init__(self, A, b, degree=15, kappa=None, nShots=1000,  target_error=None):
+    def __init__(self, A, b, kappa=None, nShots=1000, target_error=None):
         """
-        Args:
-            kappa: Condition number (if None, auto-compute from A)
-            target_error: Target approximation error (for Sunderhauf method)
-                        If specified, ignores 'degree' parameter
+        Parameters
+        ----------
+        A            : (N, N) real matrix; all singular values must be in (0, 1).
+        b            : (N,) right-hand side; normalised internally.
+        kappa        : condition number override (None => computed from A).
+        nShots       : shots for QASM simulator (unused in statevector mode).
+        target_error : target L-inf error for the 1/x Chebyshev approximation.
         """
         self.A = A
-        self.b = b
+        self.b = b / np.linalg.norm(b)
         self.nShots = nShots
         self.n = int(np.log2(len(b)))
         self.ancilla_qubits = 1
-     
-        # Compute actual condition number
+
         s = np.linalg.svd(A, compute_uv=False)
-        print(f"Singular values: {s}")
+        print(f"Singular values: {np.round(s, 6)}")
         self.actual_kappa = s[0] / s[-1]
-        
-        # Use provided kappa or actual
+
         if kappa is None:
             self.kappa = self.actual_kappa
-            print(f"Auto-detected κ = {self.kappa:.2f}")
+            print(f"Auto-detected κ = {self.kappa:.4f}")
         else:
             self.kappa = kappa
             if abs(self.kappa - self.actual_kappa) > 0.1 * self.actual_kappa:
-                print(f"Warning: Specified κ={kappa:.2f} differs from actual κ={self.actual_kappa:.2f}")
-        
-        self.dataOK = self._validate_input()
-  
-        self.degree = degree
-        self.target_error = target_error
-      
-        self.angles, self.tau, self.achieved_error = self.get_inverse_phases_sunderhauf(
-                self.kappa, target_error=target_error)
-      
-        print(f"Generated {len(self.angles)} angles for degree {len(self.angles)-1}")
+                print(f"Warning: specified κ={kappa:.4f} differs from "
+                      f"actual κ={self.actual_kappa:.4f}")
 
-    def get_inverse_phases_sunderhauf(self, kappa, target_error=None):
-        """
-        Get QSVT phases using Sunderhauf's optimal polynomial
-        
-        Args:
-            kappa: Condition number
-            target_error: Desired approximation error (optional)
-                         If None, uses degree from initialization
-        
-        Returns:
-            phases: QSVT phase angles
-            tau: Scaling factor (equivalent to delta_eff)
-            achieved_error: Actual approximation error
-        """
-        a = 1 / kappa
-        
-        # Option 1: User specifies target error - compute optimal degree
+        self.dataOK = self._validate_input()
+        self.degree = 0
+        self.target_error = target_error
+
+        self.angles, self.tau, self.achieved_error = \
+            self._get_inverse_phases_sunderhauf(self.kappa, target_error=target_error)
+
+        print(f"Generated {len(self.angles)} phase angles for degree {len(self.angles) - 1}")
+
+    # ------------------------------------------------------------------
+    # Phase computation
+    # ------------------------------------------------------------------
+    def _get_inverse_phases_sunderhauf(self, kappa, target_error=None):
+        a = 1.0 / kappa
+
         if target_error is not None:
             degree = SunderhaufPolynomial.mindegree(target_error, a)
             print(f"Optimal degree for ε={target_error:.2e}: {degree}")
             self.degree = degree
-        # Option 2: User specifies degree - compute achieved error
         else:
-            degree = self.degree
+            degree = max(self.degree, 1)
             if degree % 2 == 0:
                 degree += 1
-            achieved_error = SunderhaufPolynomial.error_for_degree(degree, a)
-            print(f"Using degree {degree}, achieved error: {achieved_error:.2e}")
-        
-        # Get optimal polynomial
+            print(f"Using degree {degree}, "
+                  f"error={SunderhaufPolynomial.error_for_degree(degree, a):.2e}")
+
         poly = SunderhaufPolynomial.poly(degree, a)
-        
-        # Compute achieved error
         achieved_error = SunderhaufPolynomial.error_for_degree(degree, a)
-        
-        # Normalize polynomial to satisfy ||p|| <= 1
-        # Section III of Sunderhauf paper
-        M = self._compute_polynomial_max(poly, degree)
-        print(f"Polynomial maximum: {M:.4f}")
-        
-        # Scale factor: need to normalize by (kappa + error) and by M
-        # tau is the effective scaling (like delta_eff in original code)
-        tau = (kappa + achieved_error) / M
-        
-        # Scale polynomial coefficients
-        poly_normalized = Chebyshev(poly.coef / M)
-        
-        # Verify normalization
-        max_val = np.max(np.abs(poly_normalized(np.linspace(-1, 1, 1000))))
-        print(f"After normalization, max value: {max_val:.6f}")
-        
-        if max_val > 0.9:
-            print(f"Warning: polynomial maximum {max_val} is close to 1, adding safety margin")
-            poly_normalized = Chebyshev(poly_normalized.coef * 0.999 / max_val)
-            tau *= 0.999 / max_val  # Match the polynomial scaling
-        
-        # Generate QSVT phases
-        phases = QuantumSignalProcessingPhases(poly_normalized, signal_operator="Wx")
-        
+
+        # Rigorous supremum bound (Sunderhauf Eq. 25-26)
+        N_samp = 25 * degree
+        x_s    = np.linspace(-1, 1, N_samp)
+        M      = np.max(np.abs(poly(x_s))) / np.cos(np.pi * degree / (2 * N_samp))
+        print(f"Polynomial maximum M = {M:.6f}")
+
+        tau            = M               # scaling to recover unnormalised A^{-1}b
+        poly_normalised = Chebyshev(poly.coef / M)
+
+        max_val = np.max(np.abs(poly_normalised(np.linspace(-1, 1, 2000))))
+        print(f"Max |p_norm| on [-1,1]: {max_val:.6f}")
+        if max_val > 0.999:
+            scale           = 0.999 / max_val
+            poly_normalised = Chebyshev(poly_normalised.coef * scale)
+            tau            /= scale
+            print(f"Applied safety rescaling by {scale:.6f}")
+
+        phases = QuantumSignalProcessingPhases(poly_normalised, signal_operator="Wx")
         return [float(phi) for phi in phases], tau, achieved_error
 
-    def _compute_polynomial_max(self, poly, degree):
-        """
-        Compute maximum value of polynomial using Sunderhauf's method (Section III)
-        
-        Uses Eq. (25-26) from the paper for rigorous bound
-        """
-        N = 25 * degree  # Sunderhauf's choice
-        x_samples = np.linspace(-1, 1, N)
-        p_values = np.abs(poly(x_samples))
-        max_sampled = np.max(p_values)
-        
-        # Correction factor for rigorous bound (Eq. 25)
-        correction = 1 / np.cos(np.pi * degree / (2 * N))
-        M = max_sampled * correction
-        
-        return M
-
-    def get_inverse_phases_interpolation(self, degree, kappa=2, buffer=0):
-        """
-        Original method: Get QSVT phases using smoothed interpolation
-        
-        This uses a Gaussian-smoothed 1/x function to avoid singularity
-        """
-        if degree % 2 == 0:
-            degree += 1
-            
-        delta_eff = 1 / (kappa * (1 + buffer))
-        sigma = delta_eff / 5
-        
-        def target_func(x):
-            x_safe = np.where(np.abs(x) < 1e-15, 1e-15 * np.sign(x), x)
-            return delta_eff * (1 - np.exp(-(x_safe / sigma)**2)) / x_safe
-
-        poly = Chebyshev.interpolate(target_func, deg=degree, domain=[-1, 1])
-        poly.coef[::2] = 0
-        
-        max_val = np.max(np.abs(poly(np.linspace(-1, 1, 1000))))
-        if max_val > 0.999:
-            poly.coef *= (0.999 / max_val)
-            delta_eff *= (0.999 / max_val)
-
-        phases = QuantumSignalProcessingPhases(poly, signal_operator="Wx")
-        return [float(phi) for phi in phases], delta_eff, sigma
-
-    def _validate_input(self):
-        s = np.linalg.svd(self.A, compute_uv=False)
-        if np.any(s >= 1 + 1e-10):
-            print(f"Warning: Singular values must be < 1")
-            return False
-        return True
-
+    # ------------------------------------------------------------------
+    # Block encoding  -- ROTATION form to match pyqsp Wx convention
+    # ------------------------------------------------------------------
     def get_block_encoding(self):
         """
-        Construct block encoding of A.
-        
-        Standard block encoding in |anc, data⟩ ordering:
-        U = [[A, sqrt(I-AA†)], [sqrt(I-A†A), -A†]]
-        
-        When applied via qc.append(U, [q_anc, q_data]), Qiskit automatically
-        handles the statevector ordering conversion.
+        Build the (2N x 2N) block-encoding unitary matching pyqsp's Wx signal:
+
+            U_BE = [[ A,                i*sqrt(I - A A†) ],
+                    [ i*sqrt(I - A†A),       A†          ]]
+
+        This ensures the effective 2x2 sub-unitary for each singular value
+        sigma_i is exactly W_pyqsp(sigma_i) = [[sigma_i, i*sqrt(1-sigma_i^2)], ...].
         """
-        N = self.A.shape[0]
-        I = np.eye(N)
+        N     = self.A.shape[0]
+        I     = np.eye(N)
         A_dag = self.A.conj().T
-        
-        top_right = scipy.linalg.sqrtm(I - self.A @ A_dag)
-        bottom_left = scipy.linalg.sqrtm(I - A_dag @ self.A)
-        bottom_right = -A_dag
-        
-        # Standard block encoding - no permutation needed!
-        U_matrix = np.block([[self.A, top_right],
-                            [bottom_left, bottom_right]])
-        
+
+        sqrt_r = scipy.linalg.sqrtm(I - self.A @ A_dag)
+        sqrt_l = scipy.linalg.sqrtm(I - A_dag @ self.A)
+
+        U_matrix = np.block([[self.A,   1j * sqrt_r],
+                              [1j * sqrt_l, A_dag  ]])
+
+        err = np.max(np.abs(U_matrix @ U_matrix.conj().T - np.eye(2 * N)))
+        if err > 1e-10:
+            print(f"Warning: block encoding not unitary, max error = {err:.2e}")
+        else:
+            print(f"Block encoding unitarity OK (max error = {err:.2e})")
+
         return Operator(U_matrix)
 
-    def apply_projector_phase(self, circuit, phi, qubits):
-        circuit.rx(-2 * phi, qubits[0])
+    # ------------------------------------------------------------------
+    # Phase gate on ancilla  (diagonal Rz, NOT Rx)
+    # ------------------------------------------------------------------
+    def _apply_projector_phase(self, circuit, phi, anc_qubit):
+        """
+        Apply P(phi) = diag(e^{i*phi}, e^{-i*phi}) on the ancilla.
 
+        Qiskit Rz(theta) = diag(e^{-i*theta/2}, e^{+i*theta/2})
+        => Rz(-2*phi)    = diag(e^{+i*phi},      e^{-i*phi})     ✓
+        """
+        circuit.rz(-2.0 * phi, anc_qubit)   # Z-rotation, NOT X-rotation
+
+    # ------------------------------------------------------------------
+    # Circuit construction
+    # ------------------------------------------------------------------
     def construct_qsvt_circuit(self):
-        q_anc = QuantumRegister(self.ancilla_qubits, 'anc')
+        """
+        QSVT sequence: P(phi_0), U_BE, P(phi_1), U_BE, ..., U_BE, P(phi_d)
+
+        Gate appended as list(q_data) + list(q_anc) so that Qiskit places
+        q_anc as the most-significant-bit (MSB) block selector, matching
+        the mathematical block-encoding convention.
+        """
+        q_anc  = QuantumRegister(self.ancilla_qubits, 'anc')
         q_data = QuantumRegister(self.n, 'b')
-        c = ClassicalRegister(self.n + self.ancilla_qubits, 'meas')
-        qc = QuantumCircuit(q_anc, q_data, c)
-        
+        c      = ClassicalRegister(self.n + self.ancilla_qubits, 'meas')
+        qc     = QuantumCircuit(q_anc, q_data, c)
+
         qc.prepare_state(Statevector(self.b), q_data)
         qc.barrier()
 
-        U_op = self.get_block_encoding()
+        U_op   = self.get_block_encoding()
         U_gate = U_op.to_instruction()
 
-        # Standard QSVT sequence: φ₀ - U - φ₁ - U - φ₂ - ... - U - φₐ
-        # Apply U consistently (not alternating with U†)
-        # CRITICAL: Qiskit reverses qubit order, so pass [data, anc] for |anc, data⟩ matrix
         for i in range(len(self.angles) - 1):
-            self.apply_projector_phase(qc, self.angles[i], q_anc)
+            self._apply_projector_phase(qc, self.angles[i], q_anc[0])
             qc.append(U_gate, list(q_data) + list(q_anc))
-        
-        self.apply_projector_phase(qc, self.angles[-1], q_anc)
+
+        self._apply_projector_phase(qc, self.angles[-1], q_anc[0])
         qc.barrier()
         qc.measure(range(qc.num_qubits), range(qc.num_qubits))
 
         print(f"Circuit width: {qc.width()}, depth: {qc.depth()}")
         return qc
 
+    # ------------------------------------------------------------------
+    # Input validation
+    # ------------------------------------------------------------------
+    def _validate_input(self):
+        s = np.linalg.svd(self.A, compute_uv=False)
+        if np.any(s >= 1.0):
+            print("Warning: all singular values must be strictly < 1.")
+            return False
+        return True
+
+    # ------------------------------------------------------------------
+    # Solve
+    # ------------------------------------------------------------------
     def solve(self, stateVector=True):
+        """
+        Run QSVT and return the normalised solution direction.
+
+        The QSVT circuit encodes p(A)|b> in the ancilla=0 subspace, where
+        p(x) ~ 1/x.  After post-selection the state is proportional to A^{-1}b.
+
+        Statevector index: k = data_idx * 2 + anc_bit
+        Ancilla=0 subspace: sv.data[0::2]  (even indices, correct data order).
+        Solution direction: real part of the extracted amplitudes.
+        """
         if not self.dataOK:
             return None
-        
+
         qc = self.construct_qsvt_circuit()
-        
+
         if stateVector:
-            print("Running QSVT circuit on statevector simulator...")
-            qc_no_meas = qc.copy()
-            qc_no_meas.remove_final_measurements()
-            sv = Statevector.from_instruction(qc_no_meas)
-            # Qiskit statevector is |data[n-1]...data[0], anc⟩
-            # Extract ancilla=0 subspace (even indices)
-            u_qsvt = sv.data[::2]
-            # NOTE: Removed n=1 reversal - testing if it's needed
+            print("Running statevector simulation...")
+            qc_sv = qc.copy()
+            qc_sv.remove_final_measurements()
+            sv = Statevector.from_instruction(qc_sv)
+
+            u_qsvt = sv.data[0::2]          # ancilla=0 => even indices
+            success_prob = np.sum(np.abs(u_qsvt)**2)
+            print(f"Success probability |anc=0>: {success_prob:.6f}")
+            if success_prob < 1e-6:
+                print("ERROR: near-zero success probability.")
+                return None
+
         else:
-            print("Running QSVT circuit on qasm_simulator...")
+            print("Running QASM simulation...")
             backend = Aer.get_backend('qasm_simulator')
-            t_qc = transpile(qc, backend)
-            counts = backend.run(t_qc, shots=self.nShots).result().get_counts()
-            
-            # Qiskit bit strings: rightmost bit is qubit 0 (ancilla in our case)
-            success_counts = {k: v for k, v in counts.items() if k.endswith('0')}
-            total_success = sum(success_counts.values())
-            
+            t_qc    = transpile(qc, backend)
+            counts  = backend.run(t_qc, shots=self.nShots).result().get_counts()
+
+            # Qiskit bitstring: rightmost char = qubit 0 = ancilla
+            success_counts = {k: v for k, v in counts.items() if k[-1] == '0'}
+            total_success  = sum(success_counts.values())
             if total_success == 0:
+                print("ERROR: no shots with ancilla=0.")
                 return np.zeros(2**self.n)
-                
+
             u_qsvt = np.zeros(2**self.n, dtype=complex)
             for bitstr, count in success_counts.items():
-                # Remove ancilla bit (last character) and read data bits
-                data_bits = bitstr[:-1]
-                idx = int(data_bits, 2)
-                u_qsvt[idx] = np.sqrt(count / total_success)
-        
-        # Fix global phase to match first component  
-        if np.abs(u_qsvt[0]) > 1e-10:
-            u_qsvt = u_qsvt * (np.conj(u_qsvt[0]) / np.abs(u_qsvt[0]))
-        
-        # Normalize
-        u_qsvt_normalized = u_qsvt / np.linalg.norm(u_qsvt)
-        
-        # For n=1, there's a qubit ordering ambiguity in Qiskit
-        # Check both orientations and pick the one that satisfies A @ x ∝ b better
-        if self.n == 1:
-            u_qsvt_rev = u_qsvt[::-1]
-            if np.abs(u_qsvt_rev[0]) > 1e-10:
-                u_qsvt_rev = u_qsvt_rev * (np.conj(u_qsvt_rev[0]) / np.abs(u_qsvt_rev[0]))
-            u_qsvt_rev_norm = u_qsvt_rev / np.linalg.norm(u_qsvt_rev)
-            
-            # Check proportionality: if A @ x ∝ b, then (A@x) × b should have zero cross product
-            # For 2D: check if (A@x)[0]*b[1] ≈ (A@x)[1]*b[0]
-            Ax_normal = self.A @ u_qsvt_normalized
-            Ax_reversed = self.A @ u_qsvt_rev_norm
-            
-            # Cross product magnitude (should be zero if proportional)
-            cross_normal = abs(Ax_normal[0] * self.b[1] - Ax_normal[1] * self.b[0])
-            cross_reversed = abs(Ax_reversed[0] * self.b[1] - Ax_reversed[1] * self.b[0])
-            
-            if cross_reversed < cross_normal:
-                return u_qsvt_rev_norm
-        
-        return u_qsvt_normalized
+                idx          = int(bitstr[:-1], 2)
+                u_qsvt[idx]  = np.sqrt(count / total_success)
+
+        # Solution direction is in the REAL PART (imaginary is the QSP completion)
+        u_real = u_qsvt.real
+        norm   = np.linalg.norm(u_real)
+        if norm < 1e-12:
+            print("ERROR: real part of extracted state has near-zero norm.")
+            return None
+        return u_real / norm
+
 
 def run_comprehensive_tests():
     """
@@ -657,7 +666,7 @@ Consider preconditioning or alternative algorithms for such cases.
 
 if __name__ == "__main__":
     # You can run individual examples or the full test suite
-    run_individual_example = True  # Set to True to run single example
+    run_individual_example = False  # Set to True to run single example
     
     if run_individual_example:
         # Single example mode
