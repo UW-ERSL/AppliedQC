@@ -64,9 +64,9 @@ def bv_secret_circuit():
     
     # Apply CNOT from data qubit i to ancilla if s[i] = '1'
     # This implements f(x) = s·x mod 2
-    for ii, yesno in enumerate(reversed(s)):
-        if yesno == '1': 
-            secretCircuit.cx(ii+1, 0)  # Control on qubit ii+1, target on ancilla 0
+    for ii, bit in enumerate(reversed(s)):
+        if bit == '1': 
+            secretCircuit.cx(ii+1, 0)  # Control on qubit ii, target on ancilla 0
     display(secretCircuit.draw('mpl'))
     U = Operator(secretCircuit)
     return U, n
