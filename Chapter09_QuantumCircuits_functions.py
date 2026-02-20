@@ -152,16 +152,16 @@ def woodbury_rank1_query(z_prep, b_prep, v_prep, u_prep, alpha, beta, shots, bac
     # Woodbury formula
     return zb - alpha * beta * vb / (1 + alpha * beta * vu) * zu
 
-def inner_product_estimation(se_unit_vector, test_unit_vector, shots = 10000):
+def innerProductEstimation(ua, ub, shots = 10000):
     """
-    Estimate |<s|x>|^2 using Hadamard test.
+    Estimate |<ua|ub>| using  Controlled Swap.
     
     Parameters
     ----------
-    se_unit_vector : array
-        State |s> vector
-    test_unit_vector : array
-        Test |x> bitstring
+    ua : array
+        State |a> vector
+    ub : array
+        State |b> vector
     shots : int
         Measurement shots
     backend : Backend, optional
@@ -170,19 +170,29 @@ def inner_product_estimation(se_unit_vector, test_unit_vector, shots = 10000):
     Returns
     -------
     float
-        Estimated |<s|x>|^2
+        Estimated |<ua|ub>|
     """
     # --- 2. Circuit Setup ---
-    num_data_qubits = int(np.log2(len(se_unit_vector))) # log2(32) = 5
-    q_aux = QuantumRegister(1, 'aux')
-    q_psi = QuantumRegister(num_data_qubits, 'sens')
-    q_phi = QuantumRegister(num_data_qubits, 'design')
+    num_data_qubits = int(np.log2(len(ua))) # log2(32) = 5
+    q_aux = QuantumRegister(1, 'anc')
+    q_psi = QuantumRegister(num_data_qubits, 'A')
+    q_phi = QuantumRegister(num_data_qubits, 'B')
     c_res = ClassicalRegister(1, 'm')
 
      # Build circuit
     qc = QuantumCircuit(q_aux, q_psi, q_phi, c_res)
-    qc.initialize(se_unit_vector, q_psi)
-    qc.initialize(test_unit_vector, q_phi)
+
+    # Create a SUB-CIRCUIT just for the state preparation
+    sub_a = QuantumCircuit(num_data_qubits)
+    sub_a.prepare_state(ua, range(num_data_qubits))
+    # Turn the sub-circuit into a single gate and give it a label
+    state_a_gate = sub_a.to_gate(label="A")
+    qc.append(state_a_gate, q_psi)
+
+    sub_b = QuantumCircuit(num_data_qubits)
+    sub_b.prepare_state(ub, range(num_data_qubits))
+    state_b_gate = sub_b.to_gate(label="B")
+    qc.append(state_b_gate, q_phi)
 
     qc.barrier()
 
@@ -198,8 +208,8 @@ def inner_product_estimation(se_unit_vector, test_unit_vector, shots = 10000):
     # Calculate |<s|x>|^2
     p0 = counts.get('0', 0) / shots
     overlap_squared = max(0, 2 * p0 - 1)
-    
-    return overlap_squared
+    innerProduct = np.sqrt(overlap_squared)
+    return innerProduct, qc
 
 
 
