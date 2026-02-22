@@ -28,6 +28,7 @@ References:
 """
 import numpy as np
 from qiskit import QuantumCircuit
+
 from IPython.display import display
 from qiskit.quantum_info import  Operator
 from qiskit.circuit.library import  MCXGate, PhaseOracle
