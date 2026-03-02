@@ -33,6 +33,7 @@ from IPython.display import display
 from qiskit.quantum_info import  Operator
 from qiskit.circuit.library import  MCXGate, PhaseOracle
 from qiskit import QuantumCircuit
+from Chapter08_QuantumGates_functions import simulate_statevector,  simulate_measurements
 import math
 
 def bv_secret_circuit():
@@ -98,7 +99,7 @@ def grover_secret_circuit():
     circuit = PhaseOracle(expression)  # Convenient Qiskit method for oracle creation
     return circuit
 
-def createPhaseInversionCircuit():
+def createPhaseOracle():
     """
     Phase Inversion Circuit for Grover's Algorithm
     ===============================================
@@ -137,6 +138,8 @@ def createPhaseInversionCircuit():
     # With ancilla in |−⟩, this applies phase flip to marked state
     mx = MCXGate(n, label = '', ctrl_state=s)  # type: ignore
     qc.append(mx, list(qr) + [anc])
+    qc.h(anc)
+    qc.x(anc)
     display(qc.draw('mpl'))
     return Operator(qc), n  # type: ignore
 
@@ -195,3 +198,17 @@ def diffusion_operator(qc, qubits):
         qc.h(q)
 
 
+if __name__ == "__main__":
+    U, n = bv_secret_circuit()
+    circuit = QuantumCircuit(n+1,n)
+    circuit.x(0) 
+    circuit.h(0) # This brings qubit 0 to |-> state
+    circuit.h(range(1,n+1)) 
+    circuit.unitary(U,range(n+1),'Secret')
+    circuit.h(range(1,n+1))
+    circuit.measure(range(1,n+1), range(0,n)) 
+    display(circuit.draw('mpl')) 
+    counts = simulate_measurements(circuit,shots = 1)
+    print(counts)
+    print("The total depth is ", circuit.depth())
+    print("The total width is ", circuit.width())

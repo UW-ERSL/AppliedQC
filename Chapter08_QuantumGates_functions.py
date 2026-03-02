@@ -42,6 +42,7 @@ def simulate_statevector(circuit):
     
     # Remove measurements if present
     circuit_no_measure = circuit.remove_final_measurements(inplace=False)
+    circuit_no_measure.save_statevector()
     simulator = AerSimulator(method='statevector')
     job = simulator.run(circuit_no_measure)
     return job.result().get_statevector()
