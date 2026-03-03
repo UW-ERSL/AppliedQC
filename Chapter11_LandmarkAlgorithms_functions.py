@@ -33,8 +33,24 @@ from IPython.display import display
 from qiskit.quantum_info import  Operator
 from qiskit.circuit.library import  MCXGate, PhaseOracle
 from qiskit import QuantumCircuit
+from qiskit.circuit.library import PhaseOracleGate
 from Chapter08_QuantumGates_functions import simulate_statevector,  simulate_measurements
 import math
+
+def bitstring_to_expression(bitstring: str):
+    """Convert bitstring like '100' to PhaseOracleGate expression.
+    Ensures variables appear in order x0, x1, ... so parse-order
+    matches index order."""
+    n = len(bitstring)
+    terms = []
+    for i in range(n):
+        bit = bitstring[n - 1 - i]  # x0 is rightmost bit
+        terms.append(f"x{i}" if bit == '1' else f"~x{i}")
+    return " & ".join(terms)
+
+def ensure_variable_order(expression, n):
+    prefix = " & ".join(f"(x{i} | ~x{i})" for i in range(n))
+    return prefix + " & " + expression
 
 def bv_secret_circuit():
     """
@@ -99,50 +115,16 @@ def grover_secret_circuit():
     circuit = PhaseOracle(expression)  # Convenient Qiskit method for oracle creation
     return circuit
 
-def createPhaseOracle():
-    """
-    Phase Inversion Circuit for Grover's Algorithm
-    ===============================================
-    Creates circuit that applies phase flip conditioned on secret string.
-    
-    Technique: Multi-controlled Toffoli with ancilla in |−⟩ state
-    - Ancilla starts in |−⟩ = (|0⟩ - |1⟩)/sqrt(2)
-    - MCX gate with ctrl_state matching secret flips ancilla
-    - Phase kickback: |ψ⟩|−⟩ → -|ψ⟩|−⟩ when control condition met
-    
-    Parameters:
-    -----------
-    Secret string: s = '101'
-    
-    Returns:
-    --------
-    U : Operator
-        Unitary operator for phase inversion
-    n : int
-        Number of qubits
-        
-    Note: This is a more explicit construction than PhaseOracle,
-    useful for understanding the phase kickback mechanism.
-    """
-    s = '101'  # Secret string to mark
-    n = len(s)
-    qc = QuantumCircuit(n+1)  # type: ignore
-    qr = range(1, n+1)  # Data qubits
-    anc = 0  # Ancilla qubit
-    
-    # Initialize ancilla to |−⟩ state for phase kickback
-    qc.x(anc)
-    qc.h(anc)
-    
-    # Multi-controlled X: Flips ancilla only when control qubits match ctrl_state
-    # With ancilla in |−⟩, this applies phase flip to marked state
-    mx = MCXGate(n, label = '', ctrl_state=s)  # type: ignore
-    qc.append(mx, list(qr) + [anc])
-    qc.h(anc)
-    qc.x(anc)
-    display(qc.draw('mpl'))
-    return Operator(qc), n  # type: ignore
-
+def createPhaseOracle(bitstring: str) -> PhaseOracleGate:
+    """Create a PhaseOracleGate that marks |bitstring⟩.
+    Reverses internally to account for Qiskit's little-endian ordering."""
+    n = len(bitstring)
+    terms = []
+    for i, bit in enumerate(bitstring[::-1]):  # reverse the string
+        var = f"x{i}"
+        terms.append(var if bit == '1' else f"~{var}")
+    expression = " & ".join(terms)
+    return PhaseOracleGate(expression)
 
 def diffusion_operator(qc, qubits):
     """
