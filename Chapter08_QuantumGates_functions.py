@@ -33,6 +33,7 @@ import numpy as np
 from qiskit_ibm_runtime import QiskitRuntimeService
 from qiskit_ibm_runtime import SamplerV2 as Sampler
 from qiskit.transpiler.preset_passmanagers import generate_preset_pass_manager
+from qiskit.transpiler import CouplingMap
 
 def simulate_statevector(circuit):
     """
@@ -68,7 +69,34 @@ def UniversalOperator(theta,phi,lambdaAngle):
 	return U
 
 
-def analyzeCircuitForSimulator(circuit, method='matrix_product_state', shots=1000, noise_model=None):
+
+def estimateCircuitGates(circuit, method='matrix_product_state'):
+    """
+    Analyzes the circuit's gate counts and depth after transpilation for simulation.
+    """
+
+    simulator = AerSimulator(method=method)
+    # Transpile to decompose MCX and adapt to simulator basis gates
+    input_circuit = transpile(circuit, simulator)
+    
+    # Extract key metrics
+    gate_counts = input_circuit.count_ops()
+    depth = input_circuit.depth()
+
+    total_gates = sum(gate_counts.values())
+    cx_gates = gate_counts.get('cx', gate_counts.get('ecr', 0))
+    singleGateCount = total_gates - cx_gates
+
+    result = {
+         'num_qubits': input_circuit.num_qubits,
+        'single_gate_count': singleGateCount,
+        'cx_gates': cx_gates,
+        'depth': depth
+    }
+    return result 
+
+
+def estimateCircuitFidelity(circuit, method='matrix_product_state', shots=1000, noise_model=None):
     """
     Analyzes the circuit's gate counts and depth after transpilation for simulation.
     """
@@ -88,12 +116,18 @@ def analyzeCircuitForSimulator(circuit, method='matrix_product_state', shots=100
     print(f"Transpiled Gate Count: {sum(gate_counts.values())}")
     print(f"Circuit Depth: {depth}")
     print(f"Multi-Qubit (CX/ECR) Gates: {gate_counts.get('cx', gate_counts.get('ecr', 0))}")
+    total_gates = sum(gate_counts.values())
+    cx_gates = gate_counts.get('cx', gate_counts.get('ecr', 0))
 
     if (input_circuit.num_qubits > 30) and (method != 'matrix_product_state'):
         print("Warning: High qubit count with non-MPS method may lead to memory issues.")
 
+    singleGateCount = total_gates - cx_gates
+    fidelity = (1-0.001) ** singleGateCount * (1-0.003)**cx_gates
+    return fidelity
 
-def analyzeCircuitForHardware(circuit, min_num_qubits=15):
+
+def findActualHardwareRequirements(circuit, min_num_qubits=15):
     """
     Analyzes the circuit's compatibility and expected performance on hardware.
     """
@@ -110,6 +144,7 @@ def analyzeCircuitForHardware(circuit, min_num_qubits=15):
     gate_counts = isa_circuit.count_ops()
     depth = isa_circuit.depth()
     
+    
     print(f"--- Hardware Analysis for {backend.name} ---")
     print(f"Number of qubits (on chosen hardware): {isa_circuit.num_qubits}")
     print(f"Original Gate Count: {sum(circuit.count_ops().values())}")
@@ -121,7 +156,7 @@ def analyzeCircuitForHardware(circuit, min_num_qubits=15):
     if depth > 100:
         print("Warning: High depth. Results may be dominated by decoherence (noise).")
     
-    return isa_circuit
+
 
 def runCircuitOnIBMQuantum(circuit,shots=1024,min_num_qubits=15,):
 	"""
