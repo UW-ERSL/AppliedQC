@@ -77,7 +77,8 @@ def estimateCircuitGates(circuit, method='matrix_product_state'):
 
     simulator = AerSimulator(method=method)
     # Transpile to decompose MCX and adapt to simulator basis gates
-    input_circuit = transpile(circuit, simulator)
+    decomposedCircuit = circuit.decompose().decompose()
+    input_circuit = transpile(decomposedCircuit, simulator)
     
     # Extract key metrics
     gate_counts = input_circuit.count_ops()
