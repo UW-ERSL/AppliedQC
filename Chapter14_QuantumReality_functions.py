@@ -3,7 +3,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from qiskit_aer import AerSimulator
 from qiskit import QuantumCircuit, QuantumRegister, ClassicalRegister, transpile
-from Chapter12_QuantumEncoding_functions import (LCU_Ax)
+from Chapter12_VectorEncoding_functions import (LCU_Ax)
 from qiskit import QuantumCircuit, QuantumRegister, ClassicalRegister, transpile
 from qiskit_aer import AerSimulator
 from qiskit.quantum_info import SparsePauliOp
