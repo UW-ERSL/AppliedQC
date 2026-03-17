@@ -59,6 +59,11 @@ def simulate_measurements(circuit, shots, noise_model=None):
         raise ValueError("Circuit must have measurements for sampling")
     
     simulator = AerSimulator(noise_model=noise_model)
+    
+    # Decompose high-level gates (e.g. StatePreparation, controlled Paulis)
+    # before transpile to avoid memory/timeout crashes
+    circuit = circuit.decompose(reps=3)
+    
     circuit_transpiled = transpile(circuit, simulator)
     job = simulator.run(circuit_transpiled, shots=shots)
     return job.result().get_counts()

@@ -9,6 +9,7 @@ from qiskit.circuit.library import StatePreparation, DiagonalGate
 from qiskit.circuit import ClassicalRegister
 from qiskit.circuit.library.standard_gates import PhaseGate
 from qiskit import QuantumCircuit, QuantumRegister, ClassicalRegister
+from Chapter08_QuantumGates_functions import (simulate_statevector, simulate_measurements, runCircuitOnIBMQuantum)
 
 
 def LCU_Ax(A, x, mode='statevector'):
@@ -111,3 +112,85 @@ def Pauli_Block_Encoding(A, mode='statevector'):
     qc, metadata = LCU_Ax(A, x, mode=mode)
     U_matrix = Operator(qc).data
     return U_matrix, metadata
+
+
+def LCU_fTAx(f, A, x, shots=10000):
+    """
+    Compute f^T * A * x by extending the LCU_Ax circuit.
+
+    Args:
+        f (np.ndarray): Observable vector (will be normalized)
+        A (np.ndarray): Matrix
+        x (np.ndarray): Input vector
+        shots (int): Number of measurements
+
+    Returns:
+        inner_product (float): Estimate of |f^T * A * x|
+        qc (QuantumCircuit): Full measurement circuit
+        metadata (dict): Circuit metadata including success_prob
+    """
+
+    # Normalize f
+    f = f / np.linalg.norm(f)
+
+    # Step 1: Get the base LCU circuit (statevector mode = no measurements)
+    qc, metadata = LCU_Ax(A, x, mode='statevector')
+   
+    num_system = metadata['num_system']
+    num_ancilla = metadata['num_ancilla']
+
+    # Step 2: Get register references by name (robust to ordering)
+    qr_anc = qc.qregs[0]  # ancilla: declared first in QuantumCircuit(qr_anc, qr_sys)
+    qr_sys = qc.qregs[1]  # system:  declared second
+
+    # Step 3: Add classical registers
+    cr_anc = ClassicalRegister(num_ancilla, 'c_anc')
+    cr_sys = ClassicalRegister(num_system, 'c_sys')
+    qc.add_register(cr_anc)
+    qc.add_register(cr_sys)
+
+    # Step 4: Measure ancilla for post-selection
+    qc.measure(qr_anc, cr_anc)
+    qc.barrier() # This is important
+    
+    # Step 5: Add f-basis rotation on system
+
+    Uf_gate = StatePreparation(f, label='f').inverse()
+    
+    qc.append(Uf_gate, qr_sys)
+
+    # Step 6: Measure system
+    qc.measure(qr_sys, cr_sys)
+   
+    # Step 7: Run circuit
+    counts = simulate_measurements(qc, shots=shots)
+   
+    # Step 8: Post-process
+    ancilla_zero = '0' * num_ancilla
+    system_zero  = '0' * num_system
+    alpha = metadata['alpha']
+
+    count_proj = 0
+    total_postselected = 0
+
+    for outcome, count in counts.items():
+        # Qiskit bit string order: 'c_sys c_anc' (last register is leftmost)
+        parts = outcome.split(' ')
+        sys_bits = parts[0]   # c_sys is added second -> leftmost in string
+        anc_bits = parts[1]   # c_anc is added first  -> rightmost in string
+
+        if anc_bits == ancilla_zero:
+            total_postselected += count
+            if sys_bits == system_zero:
+                count_proj += count
+
+    success_prob = total_postselected / shots
+    metadata['success_prob'] = success_prob
+
+    if total_postselected > 0:
+        prob_f = count_proj / total_postselected
+        norm_Ax = alpha * np.sqrt(success_prob)
+        inner_product = np.sqrt(prob_f) * norm_Ax
+        return inner_product, qc, metadata
+    else:
+        return 0.0, qc, metadata
