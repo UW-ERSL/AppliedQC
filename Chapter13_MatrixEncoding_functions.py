@@ -152,7 +152,6 @@ def LCU_fTAx(f, A, x, shots=10000, noise_model=None):
     qc.barrier() # This is important
     
     # Step 5: Add f-basis rotation on system
-
     Uf_gate = StatePreparation(f, label='f').inverse()
     
     qc.append(Uf_gate, qr_sys)
