@@ -49,7 +49,7 @@ def simulate_statevector(circuit):
     return job.result().get_statevector()
 
 
-def simulate_measurements(circuit, shots, noise_model=None):
+def simulate_measurements(circuit, shots, transpiled = False, noise_model=None):
     """
     Simulate circuit and return measurement counts.
     Circuit must have measurements.
@@ -62,9 +62,13 @@ def simulate_measurements(circuit, shots, noise_model=None):
     
     # Decompose high-level gates (e.g. StatePreparation, controlled Paulis)
     # before transpile to avoid memory/timeout crashes
-    circuit = circuit.decompose(reps=3)
     
-    circuit_transpiled = transpile(circuit, simulator)
+    if not transpiled:
+        circuit = circuit.decompose(reps=3)
+        circuit_transpiled = transpile(circuit, simulator)
+    else:
+        circuit_transpiled = circuit
+    
     job = simulator.run(circuit_transpiled, shots=shots)
     return job.result().get_counts()
 

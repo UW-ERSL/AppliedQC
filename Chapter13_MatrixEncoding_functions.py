@@ -41,10 +41,9 @@ def LCU_Ax(A, x, mode='statevector'):
 
     # Ancilla declared first -> least significant bits in statevector
     # System declared second -> most significant bits in statevector
-    qr_sys = QuantumRegister(num_system, 's')
     qr_anc = QuantumRegister(num_ancilla, 'a')
-
-     
+    qr_sys = QuantumRegister(num_system, 's')
+    
     if mode == 'measurement':
         cr_sys = ClassicalRegister(num_system, 'c_sys')
         cr_anc = ClassicalRegister(num_ancilla, 'c_anc')
@@ -78,8 +77,7 @@ def LCU_Ax(A, x, mode='statevector'):
     # UNPREP: inverse PREP on ancilla
     qc.append(StatePreparation(prep_vec, label='Prep').inverse(), qr_anc)
 
-    # ancilla is least significant => ancilla=|0> entries are at stride 2**num_ancilla
-    stride = 2**num_ancilla
+    # ancilla is least significant => ancilla=|0> 
     if mode == 'measurement':
         qc = qc.decompose(reps=3)
         qc.measure(qr_sys, cr_sys)
@@ -91,7 +89,7 @@ def LCU_Ax(A, x, mode='statevector'):
         'num_ancilla': num_ancilla,
         'coeffs': coeffs,
         'pauli_split': pauli_split,
-        'ancilla_zero_stride': stride,
+        'ancilla_zero_stride': 2**num_ancilla,
     }
     return qc, metadata
 
@@ -114,7 +112,7 @@ def Pauli_Block_Encoding(A, mode='statevector'):
     return U_matrix, metadata
 
 
-def LCU_fTAx(f, A, x, shots=10000):
+def LCU_fTAx(f, A, x, shots=10000, noise_model=None):
     """
     Compute f^T * A * x by extending the LCU_Ax circuit.
 
@@ -163,7 +161,7 @@ def LCU_fTAx(f, A, x, shots=10000):
     qc.measure(qr_sys, cr_sys)
    
     # Step 7: Run circuit
-    counts = simulate_measurements(qc, shots=shots)
+    counts = simulate_measurements(qc, shots=shots, noise_model=noise_model)
    
     # Step 8: Post-process
     ancilla_zero = '0' * num_ancilla
