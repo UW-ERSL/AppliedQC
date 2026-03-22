@@ -79,12 +79,12 @@ def UniversalOperator(theta,phi,lambdaAngle):
 
 
 
-def estimateCircuitGates(circuit, method='matrix_product_state'):
+def estimateCircuitGates(circuit):
     """
     Analyzes the circuit's gate counts and depth after transpilation for simulation.
     """
 
-    simulator = AerSimulator(method=method)
+    simulator = AerSimulator()
     # Transpile to decompose MCX and adapt to simulator basis gates
     decomposedCircuit = circuit.decompose(reps = 10)
     input_circuit = transpile(decomposedCircuit, simulator)
@@ -101,6 +101,7 @@ def estimateCircuitGates(circuit, method='matrix_product_state'):
          'num_qubits': input_circuit.num_qubits,
         'single_gate_count': singleGateCount,
         'cx_gates': cx_gates,
+        'total_gates': total_gates,
         'depth': depth
     }
     return result 
