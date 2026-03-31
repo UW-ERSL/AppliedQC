@@ -10,63 +10,16 @@ from numpy.polynomial.chebyshev import Chebyshev
 from pyqsp.angle_sequence import QuantumSignalProcessingPhases 
 from numpy.polynomial import Chebyshev
 
-def Wx_to_reflection_phases(phases_wx):
-    phases_ref = np.copy(phases_wx)
-    phases_ref[0] += np.pi/4
-    d = len(phases_wx) - 1 # Degree is 4
-    if d % 2 == 0:
-        phases_ref[-1] += np.pi/4
-    else:
-        phases_ref[-1] -= np.pi/4
-    return phases_ref
-import numpy as np
-import scipy
-import math
-import matplotlib.pyplot as plt
-from qiskit import QuantumCircuit, transpile, QuantumRegister, ClassicalRegister
-from qiskit_aer import Aer
-from qiskit.quantum_info import Statevector, Operator
-from numpy.polynomial import Chebyshev
-from pyqsp.angle_sequence import QuantumSignalProcessingPhases
 
-# ==============================================================================
-# CONVENTION NOTES  (read before modifying)
-# ==============================================================================
-#
-# pyqsp  signal_operator="Wx"  uses the ROTATION signal unitary:
-#
-#   W(x) = [[ x,           i*sqrt(1-x^2) ],    <- unitary, (0,0) elem = x
-#            [ i*sqrt(1-x^2),  x          ]]
-#
-# and the DIAGONAL phase gate:
-#
-#   P(phi) = diag( e^{i*phi},  e^{-i*phi} )
-#
-# The QSP sequence is:  U = P(phi_0) W(x) P(phi_1) W(x) ... W(x) P(phi_d)
-# and for an ODD polynomial p(x):  Re( U[0,0] ) = p(x).
-#
-# ── Block encoding ─────────────────────────────────────────────────────────
-# To match the Wx rotation signal, the (2N x 2N) block encoding must be:
-#
-#   U_BE = [[ A,              i*sqrt(I - A A†) ],
-#            [ i*sqrt(I - A†A),     A†          ]]
-#
-# Note the i factors and the +A† (not -A†) in the bottom-right corner.
-# This ensures that, for each singular value sigma_i, the effective 2x2
-# block is exactly W(sigma_i).
-#
-# ── Phase gate in Qiskit ───────────────────────────────────────────────────
-# Qiskit's  Rz(theta) = diag( e^{-i*theta/2},  e^{+i*theta/2} )
-# We need   P(phi)    = diag( e^{+i*phi},       e^{-i*phi}     )
-# => use    qc.rz(-2*phi, ancilla)     (Z-rotation, NOT X-rotation)
-#
-# ── Statevector extraction ─────────────────────────────────────────────────
-# Circuit: QuantumCircuit(q_anc, q_data)
-# Qiskit statevector ordering: |data[n-1]...data[0], anc[0]>
-#   => index k = data_idx * 2 + anc_bit
-# Post-select ancilla=0: sv.data[0::2]  (even indices, data order preserved)
-# The solution direction is in the REAL PART of the extracted amplitudes.
-#
+def SignalOperator(x):
+    U = np.array([[x, 1j*np.sqrt(1-x*x)], [1j*np.sqrt(1-x*x), x]])   
+    return U
+
+def ShiftOperator(phi):
+    return np.array([[np.exp(1j*phi), 0],
+                     [0, np.exp(-1j*phi)]])
+
+
 # ==============================================================================
 # Sunderhauf optimal 1/x polynomial
 # Ref: Sunderhauf et al., "Block-encoding structured matrices for data input
@@ -221,6 +174,8 @@ class myQSVT:
         sqrt_r = scipy.linalg.sqrtm(I - self.A @ A_dag)
         sqrt_l = scipy.linalg.sqrtm(I - A_dag @ self.A)
 
+        # This is a crude method to construct the block encoding, but it suffices for small N.
+        # The correct method is to use LCU
         U_matrix = np.block([[self.A,   1j * sqrt_r],
                               [1j * sqrt_l, A_dag  ]])
 

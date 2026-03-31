@@ -1,8 +1,9 @@
 *.pyc
 *.png
+*.pdf
 /__pycache__
 ..
 /misc
-/solutions
+/submissions
 /research
 QCTextSolution.ipynb
