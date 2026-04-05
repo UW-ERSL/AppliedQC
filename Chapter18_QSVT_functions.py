@@ -182,8 +182,7 @@ class myQSVT:
         err = np.max(np.abs(U_matrix @ U_matrix.conj().T - np.eye(2 * N)))
         if err > 1e-10:
             print(f"Warning: block encoding not unitary, max error = {err:.2e}")
-        else:
-            print(f"Block encoding unitarity OK (max error = {err:.2e})")
+       
 
         return Operator(U_matrix)
 
@@ -261,6 +260,7 @@ class myQSVT:
 
         qc = self.construct_qsvt_circuit()
 
+       
         if stateVector:
             print("Running statevector simulation...")
             qc_sv = qc.copy()
@@ -273,7 +273,6 @@ class myQSVT:
             if success_prob < 1e-6:
                 print("ERROR: near-zero success probability.")
                 return None
-
         else:
             print("Running QASM simulation...")
             backend = Aer.get_backend('qasm_simulator')
@@ -295,10 +294,14 @@ class myQSVT:
         # Solution direction is in the REAL PART (imaginary is the QSP completion)
         u_real = u_qsvt.real
         norm   = np.linalg.norm(u_real)
+        info = {}
+        info['qc'] = qc
+        info['success_prob'] = success_prob if stateVector else total_success / self.nShots
+
         if norm < 1e-12:
             print("ERROR: real part of extracted state has near-zero norm.")
             return None
-        return u_real / norm
+        return u_real / norm, info
 
 
 def run_comprehensive_tests():
@@ -342,7 +345,7 @@ def run_comprehensive_tests():
         b = b / np.linalg.norm(b)
         
         solver = myQSVT(A_std, b, kappa=kappa_2x2, target_error=0.01)
-        x_qsvt = solver.solve()
+        x_qsvt, info = solver.solve()
         
         x_classical = np.linalg.solve(A_std, b)
         x_classical /= np.linalg.norm(x_classical)
@@ -390,7 +393,7 @@ def run_comprehensive_tests():
         b = b / np.linalg.norm(b)
         
         solver = myQSVT(A_4x4, b, kappa=kappa_4x4, target_error=0.01)
-        x_qsvt = solver.solve()
+        x_qsvt, info = solver.solve()
         
         x_classical = np.linalg.solve(A_4x4, b)
         x_classical /= np.linalg.norm(x_classical)
@@ -431,7 +434,7 @@ def run_comprehensive_tests():
         kappa = np.linalg.cond(A)
         
         solver = myQSVT(A, b_test, kappa=kappa, target_error=0.01)
-        x_qsvt = solver.solve()
+        x_qsvt, info = solver.solve()
         
         x_classical = np.linalg.solve(A, b_test)
         x_classical /= np.linalg.norm(x_classical)
@@ -470,7 +473,7 @@ def run_comprehensive_tests():
     b_test = np.array([1, 1]) / np.sqrt(2)
     
     solver = myQSVT(A_rot, b_test, kappa=np.linalg.cond(A_rot), target_error=0.01)
-    x_qsvt = solver.solve()
+    x_qsvt, info = solver.solve()
     x_classical = np.linalg.solve(A_rot, b_test) / np.linalg.norm(np.linalg.solve(A_rot, b_test))
     fid = np.abs(np.vdot(x_qsvt, x_classical))**2
     passed = fid > 0.9
@@ -495,7 +498,7 @@ def run_comprehensive_tests():
     b_test = np.array([1, 2]) / np.linalg.norm([1, 2])
     
     solver = myQSVT(A_gen, b_test, kappa=np.linalg.cond(A_gen), target_error=0.01)
-    x_qsvt = solver.solve()
+    x_qsvt, info = solver.solve()
     x_classical = np.linalg.solve(A_gen, b_test) / np.linalg.norm(np.linalg.solve(A_gen, b_test))
     fid = np.abs(np.vdot(x_qsvt, x_classical))**2
     passed = fid > 0.9
@@ -527,7 +530,7 @@ def run_comprehensive_tests():
     for target_err in error_tolerances:
         solver = myQSVT(A_test, b_test, kappa=np.linalg.cond(A_test), 
                         target_error=target_err)
-        x_qsvt = solver.solve()
+        x_qsvt, info = solver.solve()
         x_classical = np.linalg.solve(A_test, b_test) / np.linalg.norm(np.linalg.solve(A_test, b_test))
         fid = np.abs(np.vdot(x_qsvt, x_classical))**2
         passed = fid > 0.85
@@ -656,7 +659,7 @@ if __name__ == "__main__":
 
         target_error = 0.01
         solver = myQSVT(A, b, kappa=kappa, target_error=target_error)
-        x_qsvt = solver.solve()
+        x_qsvt, info = solver.solve()
 
         x_classical = np.linalg.solve(A, b)
         x_classical /= np.linalg.norm(x_classical)

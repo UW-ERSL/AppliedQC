@@ -33,7 +33,9 @@ import matplotlib.pyplot as plt
 from qiskit import QuantumCircuit, QuantumRegister, ClassicalRegister
 from qiskit.quantum_info import Statevector
 from qiskit.circuit.library import QFTGate
-from Chapter08_QuantumGates_functions import simulateCircuit
+from Chapter08_QuantumGates_functions import (simulate_statevector, simulate_measurements, runCircuitOnIBMQuantum, 
+                                              findActualHardwareRequirements, plot_measurement_results)
+
 
 def trignometricSignal(t,c = [],s = []):
 	"""
