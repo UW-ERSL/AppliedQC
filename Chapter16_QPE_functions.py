@@ -44,8 +44,11 @@ import matplotlib.pyplot as plt
 from qiskit import QuantumCircuit, QuantumRegister, ClassicalRegister
 from qiskit.quantum_info import Statevector
 from qiskit.circuit.library import QFTGate
-from Chapter08_QuantumGates_functions import simulateCircuit
 from qiskit.circuit.library import QFT, phase_estimation, HamiltonianGate
+from Chapter08_QuantumGates_functions import (simulate_statevector, simulate_measurements, runCircuitOnIBMQuantum, 
+                                              findActualHardwareRequirements, plot_measurement_results)
+
+
 
 def myQPESingleBit(A,v,lambdaUpper,nShots=1000):
 	"""
@@ -110,7 +113,7 @@ def myQPESingleBit(A,v,lambdaUpper,nShots=1000):
 	
 	# Step 5: Measure ancilla to extract phase bit
 	circuit.measure([0], [0])
-	counts = simulateCircuit(circuit,shots=nShots)
+	counts = simulate_measurements(circuit,shots=nShots)
 	print('Counts:',counts)
 	
 	# Process results
@@ -219,7 +222,7 @@ def myQPEMultiBit(A,v,lambdaUpper,m,nShots=1000):
 	circuit.draw('mpl')
 	
 	# Execute circuit and process results
-	counts = simulateCircuit(circuit,shots = nShots)
+	counts = simulate_measurements(circuit,shots = nShots)
 	print(counts)
 	
 	# Sort by count (most frequent measurements first)
@@ -276,7 +279,7 @@ def QiskitQPEWrapper(A,v,lambdaUpper,m,nShots=1000):
 	
 	# Measure with reversed classical bit order (Qiskit convention)
 	circuit.measure( [*range(0, m)],[*range(m-1,-1,-1)])
-	counts = simulateCircuit(circuit,shots = nShots,method ='statevector')
+	counts = simulate_measurements(circuit,shots = nShots)
 	
 	# Process and sort results
 	countsSorted = {k: v for k, v in sorted(counts.items(), 
