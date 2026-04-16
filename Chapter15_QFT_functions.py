@@ -189,11 +189,11 @@ def QFTSignalProcessing(y,shots=1000):
 	
 	# Measure all qubits to extract frequency information
 	circuit.measure(list(range(m)),list(range(m)))
-	counts = simulateCircuit(circuit,shots=shots)
+	counts = simulate_measurements(circuit,shots=shots)
 		
 	return counts
 
-def processQFTResult(M,counts,shots):
+def processQFTResult(N,counts,shots):
 	"""
 	Extract amplitude spectrum from QFT measurement results
 	========================================================
@@ -206,7 +206,7 @@ def processQFTResult(M,counts,shots):
 	
 	Parameters:
 	-----------
-	M : int
+	N : int
 		Signal length (number of frequency bins)
 	counts : dict
 		Measurement results from QFT circuit
@@ -215,19 +215,19 @@ def processQFTResult(M,counts,shots):
 		
 	Returns:
 	--------
-	ampl : ndarray (M/2,)
+	ampl : ndarray (N/2,)
 		Amplitude spectrum (positive frequencies only due to symmetry)
 		
 	Note: Phase information is lost in measurement; only magnitudes recovered
 	"""
-	phi = np.zeros(M)
+	phi = np.zeros(N)
 	# Extract amplitudes from measurement counts
 	for i in counts:
 		freq = int(i, 2)  # Convert bitstring to frequency index
 		phi[freq] = np.sqrt(counts[i]/shots)  # Amplitude proportional to sqrt(probability)
 	
 	# Use symmetry to combine positive and negative frequencies
-	ampl = (phi[1:int(M/2)])+(phi[M-1:int(M/2):-1])
+	ampl = (phi[1:int(N/2)])+(phi[N-1:int(N/2):-1])
 	ampl = np.insert(ampl, 0,phi[0].real)  # Add DC component
 	return ampl
 	
@@ -248,7 +248,7 @@ def myQFT(m):
 	- Hadamards: n gates
 	- Controlled phases: n(n-1)/2 gates
 	- SWAPs: n/2 gates
-	Total: O(n²) gates where n = log₂(M)
+	Total: O(n²) gates where n = log₂(N)
 	
 	Parameters:
 	-----------
@@ -261,8 +261,8 @@ def myQFT(m):
 		QFT circuit with m qubits
 		
 	Efficiency Note:
-	This O(n²) gate complexity compares favorably to classical FFT's O(M log M)
-	when expressed in terms of problem size M = 2^n: O(log²M) vs O(M log M)
+	This O(n²) gate complexity compares favorably to classical FFT's O(N log N)
+	when expressed in terms of problem size N = 2^n: O(log²N) vs O(N log N)
 	"""
 	q = QuantumRegister(m, 'q')
 	c = ClassicalRegister(m,'c')
@@ -285,26 +285,26 @@ def myQFT(m):
 		circuit.swap(q[i], q[m-i-1])
 	return circuit
 
-def createQFTMatrix(M):
+def createQFTMatrix(N):
 	"""
 	Generate QFT transformation matrix
 	===================================
 	Creates unitary matrix representation of QFT.
-	QFT[j,k] = (1/sqrt(M)) · ω^(jk) where ω = exp(2πi/M)
+	QFT[j,k] = (1/sqrt(N)) · ω^(jk) where ω = exp(2πi/N)
 	
 	Difference from DFT:
-	- QFT uses positive sign in exponent: exp(+2πi/M)
-	- QFT includes 1/sqrt(M) normalization (unitary)
-	- DFT uses exp(-2πi/M) without normalization
+	- QFT uses positive sign in exponent: exp(+2πi/N)
+	- QFT includes 1/sqrt(N) normalization (unitary)
+	- DFT uses exp(-2πi/N) without normalization
 	
 	Parameters:
 	-----------
-	M : int
+	N : int
 		Transform size (must be power of 2 for quantum implementation)
 		
 	Returns:
 	--------
-	QFTMatrix : ndarray (M × M)
+	QFTMatrix : ndarray (N × N)
 		Complex unitary QFT matrix
 		
 	Properties:
@@ -312,7 +312,7 @@ def createQFTMatrix(M):
 	- Inverse: QFT^(-1) = QFT†
 	- Eigenvalues all have magnitude 1
 	"""
-	omega = np.exp(1j*(2*np.pi/M))
-	i, j = np.meshgrid(np.arange(M), np.arange(M))
-	QFTMatrix = omega ** (i * j)/np.sqrt(M)  # Include normalization
+	omega = np.exp(1j*(2*np.pi/N))
+	i, j = np.meshgrid(np.arange(N), np.arange(N))
+	QFTMatrix = omega ** (i * j)/np.sqrt(N)  # Include normalization
 	return QFTMatrix
