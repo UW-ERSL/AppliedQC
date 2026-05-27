@@ -3,6 +3,8 @@ from qiskit import QuantumCircuit, QuantumRegister, ClassicalRegister
 from qiskit.circuit.library import QFT
 from qiskit_aer import AerSimulator
 from qiskit.circuit.library import GroverOperator
+from Chapter08_QuantumGates_functions import (simulate_statevector, simulate_measurements, runCircuitOnIBMQuantum, 
+                                              findActualHardwareRequirements, plot_measurement_results)
 
 def build_grover_operator(A_circuit, good_state_qubits):
     """
@@ -50,6 +52,7 @@ def myQAE(A_circuit, good_state_qubits, m, nShots=10000):
 
     # Execute and decode
     sim = AerSimulator()
+    
     result = sim.run(qc, shots=nShots).result()
     counts = result.get_counts()
 
