@@ -37,7 +37,7 @@ from qiskit.circuit.library import PhaseOracleGate, grover_operator
 from qiskit import ClassicalRegister
 
 from Chapter08_QuantumGates_functions import simulate_measurements
-from Chapter11_GroverAlgorithm_functions import bitstring_to_expression
+from Chapter12_GroverAlgorithm_functions import bitstring_to_expression
 
 # ═══════════════════════════════════════════════════════════════════════════
 # 1.  Problem setup

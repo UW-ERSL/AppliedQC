@@ -31,7 +31,7 @@ from qiskit import ClassicalRegister
 
 # ── Use the project's own helper functions (Ch. 8 and Ch. 11) ──────────────
 from Chapter08_QuantumGates_functions import simulate_measurements, plot_measurement_results
-from Chapter11_GroverAlgorithm_functions import bitstring_to_expression
+from Chapter12_GroverAlgorithm_functions import bitstring_to_expression
 
 # ═══════════════════════════════════════════════════════════════════════════
 # 1.  Problem setup
