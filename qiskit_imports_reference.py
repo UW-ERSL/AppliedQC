@@ -7,7 +7,6 @@ from qiskit import QuantumCircuit
 from qiskit import transpile
 from qiskit import QuantumRegister
 from qiskit import ClassicalRegister
-
 from qiskit.quantum_info import Statevector
 from qiskit.quantum_info import Operator
 from qiskit.quantum_info import SparsePauliOp

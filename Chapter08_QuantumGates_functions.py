@@ -66,10 +66,12 @@ def simulate_measurements(circuit, shots, transpiled = False, noise_model=None):
     if not transpiled:
         circuit = circuit.decompose(reps=3)
         circuit_transpiled = transpile(circuit, simulator)
+        job = simulator.run(circuit_transpiled, shots=shots)
     else:
-        circuit_transpiled = circuit
+        job = simulator.run(circuit, shots=shots)
+        print(job)
     
-    job = simulator.run(circuit_transpiled, shots=shots)
+    
     return job.result().get_counts()
 
 def UniversalOperator(theta,phi,lambdaAngle):
