@@ -2,13 +2,13 @@ import numpy as np
 import scipy
 import math
 import matplotlib.pyplot as plt
+from numpy.polynomial import Chebyshev
+from pyqsp.angle_sequence import QuantumSignalProcessingPhases 
+
 from qiskit import QuantumCircuit
 from qiskit_aer import Aer
 from qiskit import QuantumCircuit, transpile, QuantumRegister, ClassicalRegister
 from qiskit.quantum_info import Statevector, Operator
-from numpy.polynomial.chebyshev import Chebyshev
-from pyqsp.angle_sequence import QuantumSignalProcessingPhases 
-from numpy.polynomial import Chebyshev
 
 
 def SignalOperator(x):
