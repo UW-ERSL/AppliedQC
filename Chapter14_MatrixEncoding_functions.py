@@ -9,6 +9,7 @@ from qiskit.circuit.library import StatePreparation, DiagonalGate
 from qiskit.circuit import ClassicalRegister
 from qiskit.circuit.library.standard_gates import PhaseGate
 from qiskit import QuantumCircuit, QuantumRegister, ClassicalRegister
+
 from Chapter08_QuantumGates_functions import (simulate_statevector, simulate_measurements, runCircuitOnIBMQuantum)
 
 

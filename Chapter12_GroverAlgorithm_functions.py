@@ -27,13 +27,14 @@ References:
 - Nielsen & Chuang (2010): Quantum Computation and Quantum Information, Ch. 6
 """
 import numpy as np
-from qiskit import QuantumCircuit
-
 from IPython.display import display
+
+from qiskit import QuantumCircuit
 from qiskit.quantum_info import  Operator
 from qiskit.circuit.library import  MCXGate, PhaseOracle
 from qiskit import QuantumCircuit
 from qiskit.circuit.library import PhaseOracleGate
+
 from Chapter08_QuantumGates_functions import simulate_statevector,  simulate_measurements
 import math
 

@@ -10,10 +10,11 @@ References:
 """
 
 import numpy as np
-from collections import defaultdict
+
 from qiskit import QuantumCircuit, transpile
-from qiskit_aer import Aer, StatevectorSimulator
+from qiskit_aer import Aer
 from qiskit import QuantumCircuit, QuantumRegister, ClassicalRegister
+
 from Chapter08_QuantumGates_functions import simulate_measurements #type: ignore
 
 

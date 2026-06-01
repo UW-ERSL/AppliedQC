@@ -25,15 +25,15 @@ References:
 """
 
 import numpy as np
-from qiskit import QuantumCircuit, transpile
+import matplotlib.pyplot as plt
+
+from qiskit import  transpile
 from qiskit_aer import Aer
 from qiskit_aer import AerSimulator
-import matplotlib.pyplot as plt
-import numpy as np
 from qiskit_ibm_runtime import QiskitRuntimeService
 from qiskit_ibm_runtime import SamplerV2 as Sampler
 from qiskit.transpiler.preset_passmanagers import generate_preset_pass_manager
-from qiskit.transpiler import CouplingMap
+
 
 def simulate_statevector(circuit):
     """
@@ -87,22 +87,23 @@ def estimateCircuitGates(circuit):
     simulator = AerSimulator()
     # Transpile to decompose MCX and adapt to simulator basis gates
     decomposedCircuit = circuit.decompose(reps = 10)
-    input_circuit = transpile(decomposedCircuit, simulator)
+    transpiled_circuit = transpile(decomposedCircuit, simulator)
     
     # Extract key metrics
-    gate_counts = input_circuit.count_ops()
-    depth = input_circuit.depth()
+    gate_counts = transpiled_circuit.count_ops()
+    depth = transpiled_circuit.depth()
 
     total_gates = sum(gate_counts.values())
     cx_gates = gate_counts.get('cx', gate_counts.get('ecr', 0))
     singleGateCount = total_gates - cx_gates
 
     result = {
-         'num_qubits': input_circuit.num_qubits,
+         'num_qubits': transpiled_circuit.num_qubits,
         'single_gate_count': singleGateCount,
         'cx_gates': cx_gates,
         'total_gates': total_gates,
-        'depth': depth
+        'depth': depth,
+        'transpiled_circuit': transpiled_circuit,
     }
     return result 
 
@@ -115,14 +116,14 @@ def estimateCircuitFidelity(circuit, method='matrix_product_state', shots=1000, 
     simulator = AerSimulator(method=method, noise_model=noise_model)
     
     # Transpile to decompose MCX and adapt to simulator basis gates
-    input_circuit = transpile(circuit, simulator)
+    transpiled_circuit = transpile(circuit, simulator)
     
     # Extract key metrics
-    gate_counts = input_circuit.count_ops()
-    depth = input_circuit.depth()
+    gate_counts = transpiled_circuit.count_ops()
+    depth = transpiled_circuit.depth()
     
     print(f"--- Simulator Analysis ({method}) ---")
-    print(f"Number of qubits: {input_circuit.num_qubits}")
+    print(f"Number of qubits: {transpiled_circuit.num_qubits}")
     print(f"Original Gate Count: {sum(circuit.count_ops().values())}")
     print(f"Transpiled Gate Count: {sum(gate_counts.values())}")
     print(f"Circuit Depth: {depth}")
@@ -130,7 +131,7 @@ def estimateCircuitFidelity(circuit, method='matrix_product_state', shots=1000, 
     total_gates = sum(gate_counts.values())
     cx_gates = gate_counts.get('cx', gate_counts.get('ecr', 0))
 
-    if (input_circuit.num_qubits > 30) and (method != 'matrix_product_state'):
+    if (transpiled_circuit.num_qubits > 30) and (method != 'matrix_product_state'):
         print("Warning: High qubit count with non-MPS method may lead to memory issues.")
 
     singleGateCount = total_gates - cx_gates

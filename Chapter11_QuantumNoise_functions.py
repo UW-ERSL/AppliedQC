@@ -3,12 +3,10 @@ import numpy as np
 import matplotlib.pyplot as plt
 from qiskit_aer import AerSimulator
 from qiskit import QuantumCircuit, QuantumRegister, ClassicalRegister, transpile
-from Chapter14_MatrixEncoding_functions import (LCU_Ax)
-from qiskit import QuantumCircuit, QuantumRegister, ClassicalRegister, transpile
-from qiskit_aer import AerSimulator
 from qiskit.quantum_info import SparsePauliOp
 from qiskit.circuit.library import StatePreparation
 
+from Chapter14_MatrixEncoding_functions import (LCU_Ax)
 
 def postprocess_measurements(counts, metadata):
     """Post-process measurement results.

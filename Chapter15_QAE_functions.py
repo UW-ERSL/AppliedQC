@@ -3,8 +3,49 @@ from qiskit import QuantumCircuit, QuantumRegister, ClassicalRegister
 from qiskit.circuit.library import QFT
 from qiskit_aer import AerSimulator
 from qiskit.circuit.library import GroverOperator
+from qiskit.circuit.library import StatePreparation
+from qiskit.quantum_info import SparsePauliOp
+
 from Chapter08_QuantumGates_functions import (simulate_statevector, simulate_measurements, runCircuitOnIBMQuantum, 
                                               findActualHardwareRequirements, plot_measurement_results)
+
+from Chapter14_MatrixEncoding_functions import LCU_Ax
+
+
+def build_observable_circuit(A, x, f):
+    f = f / np.linalg.norm(f)
+
+    # Get alpha from Pauli decomposition
+    pauli_split = SparsePauliOp.from_operator(A)
+    alpha = np.sum(np.abs(pauli_split.coeffs))
+    num_system = int(np.ceil(np.log2(A.shape[0])))
+
+    # Post-selected system state: A|x> / ||A|x>||
+    Ax = A @ x
+    Ax_norm = Ax / np.linalg.norm(Ax)
+
+    # System-only circuit — no ancilla
+    qc = QuantumCircuit(num_system)
+
+    # Step 1: Prepare A|x>/||A|x>||
+    qc.append(StatePreparation(Ax_norm.astype(complex), label='A|x>'), range(num_system))
+
+    # Step 2: U_f^dag — rotates |f> -> |0>
+    qc.append(StatePreparation(f.astype(complex), label='Uf').inverse(), range(num_system))
+
+    # Step 3: X gates — IQAE's good state is |1...1>, ours is |0...0>
+    for i in range(num_system):
+        qc.x(i)
+
+    p_success = np.linalg.norm(Ax)**2 / alpha**2
+    metadata = {
+        'alpha': alpha,
+        'num_system': num_system,
+        'num_ancilla': 0,
+        'p_success': p_success,
+        'good_qubits': list(range(num_system)),
+    }
+    return qc, metadata
 
 def build_grover_operator(A_circuit, good_state_qubits):
     """
