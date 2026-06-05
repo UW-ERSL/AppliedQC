@@ -152,10 +152,10 @@ class Poisson2DFD:
         
         # Create figure with subplots
         fig = plt.figure(figsize=(16, 5))
-        levels = 30
-        contour = plt.contourf(X, Y, U_full, levels=levels, cmap='viridis')
+        levels = 20
+        contour = plt.contourf(X, Y, U_full, levels=levels, cmap='Greys', vmax=0.75)
         plt.contour(X, Y, U_full, levels=levels, colors='black', 
-                    linewidths=0.5, alpha=0.3)
+            linewidths=1.25, alpha=0.9)
         plt.xlabel('x', fontsize=10)
         plt.ylabel('y', fontsize=10)
         plt.title(f'2D Poisson FD Solution (max = {np.max(u):.4f})')
@@ -280,10 +280,12 @@ class Poisson2DFE:
         
         # Create figure
         fig = plt.figure(figsize=(16, 5))
-        levels = 30
-        contour = plt.contourf(X, Y, U_grid.T, levels=levels, cmap='viridis')
+        levels = 20
+        gray_levels = np.linspace(1.0, 0.7, levels)
+        contour = plt.contourf(X, Y, U_grid.T, levels=levels,
+                       colors=[str(g) for g in gray_levels])
         plt.contour(X, Y, U_grid.T, levels=levels, colors='black', 
-                    linewidths=0.5, alpha=0.3)
+                linewidths=1.25, alpha=0.9)
         plt.xlabel('x', fontsize=10)
         plt.ylabel('y', fontsize=10)
         plt.title(f'{title} (max = {np.max(u):.4f})')
@@ -788,9 +790,9 @@ class TrussFEM:
                 color=color, linewidth=lw, alpha=alpha, zorder=1)
             # Use a different font for node labels
             if show_labels:
-                ax.text(self.nodes[i, 0], self.nodes[i, 1], str(i), color='blue', fontsize=16,
+                ax.text(self.nodes[i, 0], self.nodes[i, 1], str(i), color='blue', fontsize=12,
                         ha='center', va='center', fontname='Comic Sans MS', zorder=10)
-                ax.text(self.nodes[j, 0], self.nodes[j, 1], str(j), color='blue', fontsize=16,
+                ax.text(self.nodes[j, 0], self.nodes[j, 1], str(j), color='blue', fontsize=12,
                         ha='center', va='center', fontname='Comic Sans MS', zorder=10)
             # Plot element number at x% along the element, slightly above the member
             frac = 0.60
@@ -808,7 +810,7 @@ class TrussFEM:
                 x_pos += offset * perp_x
                 y_pos += offset * perp_y
             if (show_labels):
-                ax.text(x_pos, y_pos, str(idx), color='red', fontsize=20, ha='center', va='center', alpha=0.8)
+                ax.text(x_pos, y_pos, str(idx), color='red', fontsize=16, ha='center', va='center', alpha=0.8)
         
         # Plot deformed structure if displacements provided
         if displacements is not None:
@@ -858,7 +860,7 @@ class TrussFEM:
         
         # Draw load arrows
         if self.loads is not None:
-            arrow_scale = 0.1  # Arrow length relative to structure size
+            arrow_scale = 0.2  # Arrow length relative to structure size
             max_load = np.max(np.abs(self.loads[self.loads != 0])) if np.any(self.loads != 0) else 1.0
             
            
@@ -895,7 +897,7 @@ class TrussFEM:
                     end_y = start_y + dy
                     ax.text(end_x, end_y, 
                         f'{load_kN:.1f} kN',
-                        color='red', fontsize=11, fontweight='bold',
+                        color='red', fontsize=16, fontweight='bold',
                         ha='center', va='bottom' if fy < 0 else 'top',
                         bbox=dict(boxstyle='round,pad=0.4',
                                     facecolor='white', edgecolor='red', alpha=0.9))
@@ -907,9 +909,10 @@ class TrussFEM:
                     fontsize=9, bbox=dict(boxstyle='round,pad=0.3',
                     facecolor='white', alpha=0.7))
         
-        ax.set_xlabel('x (m)', fontsize=12)
-        ax.set_ylabel('y (m)', fontsize=12)
-        ax.set_title(title, fontsize=14, fontweight='bold')
+        ax.set_xlabel('x (m)', fontsize=20)
+        ax.set_ylabel('y (m)', fontsize=20)
+        ax.set_title(title, fontsize=20)
+        ax.tick_params(axis='both', which='major', labelsize=20)
         ax.axis('equal')
         ax.grid(True, alpha=0.3, linestyle='--')
       
