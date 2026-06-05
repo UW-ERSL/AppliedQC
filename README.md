@@ -66,18 +66,16 @@ cd AppliedQC
 
 The book uses **Anaconda** for environment management and **VS Code** as the recommended editor (see Chapter 2 for detailed setup instructions).
 
-Install the core dependencies:
+Install all dependencies from the included `requirements.txt` (Python >= 3.10 required):
 ```bash
-pip install qiskit qiskit-ibm-runtime qiskit-aer
-pip install dwave-ocean-sdk pyqubo dimod
-pip install numpy scipy matplotlib jupyter
+pip install -r requirements.txt
 ```
 
-Or create a dedicated conda environment:
+Or create a dedicated conda environment first:
 ```bash
 conda create -n appliedqc python=3.11
 conda activate appliedqc
-pip install qiskit qiskit-ibm-runtime qiskit-aer dwave-ocean-sdk pyqubo dimod numpy scipy matplotlib jupyter
+pip install -r requirements.txt
 ```
 
 ### 3. Launch the notebooks
