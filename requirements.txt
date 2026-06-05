@@ -1,0 +1,43 @@
+# ============================================================
+# Applied Quantum Computing for Engineers: From Theory to Implementation
+# Krishnan Suresh, University of Wisconsin-Madison (2026)
+# https://github.com/UW-ERSL/AppliedQC
+#
+# Python >= 3.10 required
+# Install with: pip install -r requirements.txt
+# ============================================================
+
+# ------------------------------------------------------------
+# Gate-Based Quantum Computing (Chapters 7-21)
+# IBM Qiskit + Aer Simulator + IBM Quantum hardware access
+# ------------------------------------------------------------
+qiskit>=2.3.0
+qiskit-aer>=0.17.2
+qiskit-ibm-runtime>=0.37.0
+
+# ------------------------------------------------------------
+# Quantum Annealing (Chapters 5-6)
+# D-Wave Ocean SDK (includes dimod, pyqubo, dwave-system, etc.)
+# ------------------------------------------------------------
+dwave-ocean-sdk>=6.1.1
+
+# ------------------------------------------------------------
+# Scientific Computing
+# ------------------------------------------------------------
+numpy>=1.26.0
+scipy>=1.13.0
+matplotlib>=3.9.0
+
+# ------------------------------------------------------------
+# Jupyter Notebooks
+# ------------------------------------------------------------
+jupyter>=1.1.0
+notebook>=7.2.0
+ipykernel>=6.29.0
+
+# ------------------------------------------------------------
+# Utilities
+# ------------------------------------------------------------
+networkx>=3.3        # Graph tools (used in D-Wave embedding chapters)
+pandas>=2.2.0        # Data handling in illustrative examples
+tqdm>=4.66.0         # Progress bars in iterative algorithms
