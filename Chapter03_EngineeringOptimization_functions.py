@@ -788,12 +788,6 @@ class TrussFEM:
             ax.plot([self.nodes[i, 0], self.nodes[j, 0]], 
                 [self.nodes[i, 1], self.nodes[j, 1]], 
                 color=color, linewidth=lw, alpha=alpha, zorder=1)
-            # Use a different font for node labels
-            if show_labels:
-                ax.text(self.nodes[i, 0], self.nodes[i, 1], str(i), color='blue', fontsize=12,
-                        ha='center', va='center', fontname='Comic Sans MS', zorder=10)
-                ax.text(self.nodes[j, 0], self.nodes[j, 1], str(j), color='blue', fontsize=12,
-                        ha='center', va='center', fontname='Comic Sans MS', zorder=10)
             # Plot element number at x% along the element, slightly above the member
             frac = 0.60
             x_pos = self.nodes[i, 0] + frac * (self.nodes[j, 0] - self.nodes[i, 0])
@@ -810,7 +804,7 @@ class TrussFEM:
                 x_pos += offset * perp_x
                 y_pos += offset * perp_y
             if (show_labels):
-                ax.text(x_pos, y_pos, str(idx), color='red', fontsize=16, ha='center', va='center', alpha=0.8)
+                ax.text(x_pos, y_pos, str(idx), color='red', fontsize=24, ha='center', va='center', alpha=0.8)
         
         # Plot deformed structure if displacements provided
         if displacements is not None:
@@ -833,15 +827,13 @@ class TrussFEM:
         
         # Plot undeformed nodes
         if show_nodes:
-            ax.plot(self.nodes[:, 0], self.nodes[:, 1], 
-            'o', color='lightgray', markersize=8, zorder=4)
             LScale = 1.0
             if show_labels:
                 # Show node numbers next to nodes with shaded background
                 for i, (x, y) in enumerate(self.nodes):
                     ax.text(
                         x + 0.03*LScale, y + 0.03*LScale, str(i),
-                        color='black', fontsize=20, ha='center', va='bottom', alpha=0.8,
+                        color='black', fontsize=24, ha='center', va='bottom', alpha=0.8,
                         bbox=dict(boxstyle='round,pad=0.3', facecolor='lightgray', edgecolor='none', alpha=0.7)
                     )
         # Mark fixed supports
@@ -901,13 +893,6 @@ class TrussFEM:
                         ha='center', va='bottom' if fy < 0 else 'top',
                         bbox=dict(boxstyle='round,pad=0.4',
                                     facecolor='white', edgecolor='red', alpha=0.9))
-        
-        # Add node labels
-        if show_labels:
-            for i, (x, y) in enumerate(self.nodes):
-                ax.text(x, y+0.15, f'{i}', ha='center', va='bottom',
-                    fontsize=9, bbox=dict(boxstyle='round,pad=0.3',
-                    facecolor='white', alpha=0.7))
         
         ax.set_xlabel('x (m)', fontsize=20)
         ax.set_ylabel('y (m)', fontsize=20)
