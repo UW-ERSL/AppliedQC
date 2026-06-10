@@ -38,16 +38,41 @@ from qiskit.circuit.library import PhaseOracleGate
 from Chapter08_QuantumGates_functions import simulate_statevector,  simulate_measurements
 import math
 
-def bitstring_to_expression(bitstring: str):
-    """Convert bitstring like '100' to PhaseOracleGate expression.
+def bitstring_to_expression(bitstring_expr: str):
+    """Convert bitstring or Boolean expression of bitstrings to PhaseOracleGate expression.
+    
+    Examples:
+    - Single bitstring '100' → '~x0 & x1 & x2'
+    - Multiple bitstrings '100 & 101' → '(~x0 & x1 & x2) & (~x0 & x2 & x3)'
+    
     Ensures variables appear in order x0, x1, ... so parse-order
     matches index order."""
-    n = len(bitstring)
-    terms = []
-    for i in range(n):
-        bit = bitstring[n - 1 - i]  # x0 is rightmost bit
-        terms.append(f"x{i}" if bit == '1' else f"~x{i}")
-    return " & ".join(terms)
+    
+    def convert_single_bitstring(bitstring: str):
+        """Convert single bitstring like '100' to expression.
+        Rightmost bit is x0, leftmost is x(n-1)."""
+        n = len(bitstring)
+        terms = []
+        # Reverse bitstring so we index from left-to-right after reversal
+        reversed_bits = bitstring[::-1]
+        for i, bit in enumerate(reversed_bits):
+            terms.append(f"x{i}" if bit == '1' else f"~x{i}")
+        return " & ".join(terms)
+    
+    import re
+
+    expr = bitstring_expr.strip()
+
+    # Single pure bitstring, e.g. "101"
+    if re.fullmatch(r"[01]+", expr):
+        return convert_single_bitstring(expr)
+
+    # Boolean expression case: replace only binary tokens (e.g. 101, 001)
+    # while preserving operators/parentheses.
+    def repl(match):
+        return f"({convert_single_bitstring(match.group(0))})"
+
+    return re.sub(r"\b[01]+\b", repl, expr)
 
 def ensure_variable_order(expression, n):
     prefix = " & ".join(f"(x{i} | ~x{i})" for i in range(n))
