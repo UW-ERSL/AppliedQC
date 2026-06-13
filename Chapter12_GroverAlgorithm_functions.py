@@ -74,8 +74,21 @@ def bitstring_to_expression(bitstring_expr: str):
 
     return re.sub(r"\b[01]+\b", repl, expr)
 
-def ensure_variable_order(expression, n):
-    prefix = " & ".join(f"(x{i} | ~x{i})" for i in range(n))
+def get_qiskit_expression(expression, n, prefix_vars=None):
+    """
+    Pad expression with tautologies so PhaseOracleGate sees all
+    variables in the correct order.
+
+    Parameters
+    ----------
+    expression   : str        Boolean expression
+    n            : int        number of variables (used if prefix_vars is None)
+    prefix_vars  : list[str]  explicit variable names, e.g. ['xi0','xi1','xj0','xj1']
+                              If None, defaults to ['x0', 'x1', ..., 'x{n-1}']
+    """
+    if prefix_vars is None:
+        prefix_vars = [f"x{i}" for i in range(n)]
+    prefix = " & ".join(f"({v} | ~{v})" for v in prefix_vars)
     return prefix + " & " + expression
 
 
@@ -159,7 +172,8 @@ def get_void_expression(grid):
     clauses    = [coord_to_clause(i, j) for i, j in void_coords]
     expression = " | ".join(clauses)
     n_qubits   = 2 * m
-    return expression, n_qubits, void_coords
+    all_vars  = [f"xi{k}" for k in range(m)] + [f"xj{k}" for k in range(m)]
+    return expression, n_qubits, void_coords, all_vars
 
 
 def decode_void_measurement(bitstring, m):
