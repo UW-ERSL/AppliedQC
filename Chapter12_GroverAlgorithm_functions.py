@@ -78,145 +78,109 @@ def ensure_variable_order(expression, n):
     prefix = " & ".join(f"(x{i} | ~x{i})" for i in range(n))
     return prefix + " & " + expression
 
-def bv_secret_circuit():
+
+def get_feasible_expression():
+    one_feasible_soln  = (
+        "(x0 | x1 | x2) & (x0 | x3 | x4)"
+        " & (x1 | x3 | x5 | x6) & (x2 | x5) & (x4 | x6) & (~x1 | ~x4)"
+        " & (~x1 | x3) & (x0 | ~x4) & (~x4 | x2) & (x2 | x3) & (x5 | x0)"
+        " & (~x1 | x6) & (x6 | x2) & (~x4 | ~x1 | x5) & (x3 | x6 | ~x1)"
+        " & (~x1 | x5 | x2) & (x0 | x3 | x6) & (x5 | x3 | ~x4)"
+        " & (x2 | ~x4 | x6) & (~x1 | ~x4 | x0) & (x0 | ~x5 | x3)"
+        " & (~x1 | ~x3 | x5) & (~x1 | x2 | ~x3) & (~x4 | x5 | ~x3)"
+        " & (~x4 | ~x6 | x3) & (x5 | ~x2 | ~x3) & (x3 | ~x0 | ~x2)"
+        " & (~x4 | x5 | ~x6) & (~x1 | ~x2 | ~x3 | x5)"
+        " & (x0 | ~x2 | ~x3) & (x2 | ~x3 | ~x5) & (~x4 | ~x5 | x6)"
+        " & (~x4 | x1 | ~x5) & (~x1 | ~x0 | ~x6)"
+    )
+    return one_feasible_soln
+
+
+def get_void_expression(grid):
     """
-    Bernstein-Vazirani Oracle Circuit
-    ==================================
-    Creates oracle for BV algorithm that encodes secret bitstring.
-    
-    Algorithm: Given black-box function f(x) = s·x (mod 2), find secret string s.
-    Classical: Requires n queries (one per bit)
-    Quantum: Requires only 1 query using superposition
-    
-    Implementation:
-    - Secret string: s = '11010'
-    - Oracle applies: |x⟩|y⟩ → |x⟩|y ⊕ (s·x)⟩
-    - Using phase kickback with |−⟩ ancilla: |x⟩|−⟩ → (−1)^(s·x)|x⟩|−⟩
-    
-    Returns:
-    --------
-    U : Operator
-        Unitary operator for oracle
-    n : int
-        Number of qubits (length of secret string)
-    
-    Complexity: O(n) gates for n-bit string
+    Generate a PhaseOracleGate Boolean expression for a microstructure grid
+    using coordinate encoding.
+
+    Convention:
+        0 = void  (white cell)
+        1 = solid (gray cell)
+
+    Encoding:
+        A 2^m x 2^m grid has N = 2^(2m) cells. Rather than one qubit per cell
+        (which would require N qubits), we encode each cell by its (row, col)
+        address using two m-qubit registers -- one for the row index i, one for
+        the column index j. This requires only 2m qubits total: an exponential
+        reduction over the flat encoding.
+
+        Register layout (Qiskit little-endian):
+            Row register : xi_0, xi_1, ..., xi_{m-1}   (qubits 0 .. m-1)
+            Col register : xj_0, xj_1, ..., xj_{m-1}   (qubits m .. 2m-1)
+
+        Each void at (i_v, j_v) produces one conjunction over all 2m variables.
+        Multiple voids produce a disjunction of such conjunctions, so every void
+        address is a marked state for the Grover oracle.
+
+    Parameters
+    ----------
+    grid : 2D array-like of int, shape (2^m, 2^m)
+
+    Returns
+    -------
+    expression   : str             Boolean expression for PhaseOracleGate
+    n_qubits     : int             2m -- number of qubits required
+    void_coords  : list[(int,int)] (row, col) pairs of all voids
     """
-    s = '11010'  # The hidden bitstring to find
-    n = len(s)
-    secretCircuit = QuantumCircuit(n+1)  # n data qubits + 1 ancilla
-    
-    # Apply CNOT from data qubit i to ancilla if s[i] = '1'
-    # This implements f(x) = s·x mod 2
-    for ii, bit in enumerate(reversed(s)):
-        if bit == '1': 
-            secretCircuit.cx(ii+1, 0)  # Control on qubit ii, target on ancilla 0
-    display(secretCircuit.draw('mpl'))
-    U = Operator(secretCircuit)
-    return U, n
+    grid_array = np.array(grid)
+    rows, cols = grid_array.shape
+    m = int(np.log2(rows))          # rows = cols = 2^m
+
+    void_coords = [
+        (i, j)
+        for i in range(rows)
+        for j in range(cols)
+        if grid_array[i, j] == 0    # 0 = void
+    ]
+
+    if not void_coords:
+        raise ValueError("No voids found in grid.")
+
+    def coord_to_clause(i, j):
+        """One conjunction that fires exactly at address (i, j).
+        Row bits: xi_0..xi_{m-1}; Col bits: xj_0..xj_{m-1} (little-endian)."""
+        row_bits = format(i, f'0{m}b')[::-1]   # reverse for little-endian
+        col_bits = format(j, f'0{m}b')[::-1]
+        terms = []
+        for k, bit in enumerate(row_bits):
+            terms.append(f"xi{k}" if bit == '1' else f"~xi{k}")
+        for k, bit in enumerate(col_bits):
+            terms.append(f"xj{k}" if bit == '1' else f"~xj{k}")
+        return "(" + " & ".join(terms) + ")"
+
+    clauses    = [coord_to_clause(i, j) for i, j in void_coords]
+    expression = " | ".join(clauses)
+    n_qubits   = 2 * m
+    return expression, n_qubits, void_coords
 
 
-def grover_secret_circuit():
+def decode_void_measurement(bitstring, m):
     """
-    Grover Oracle using Phase Oracle
-    =================================
-    Creates oracle for Grover's search algorithm.
-    
-    Marks target state '11010' by phase flip: |x⟩ → -|x⟩ if x is solution
-    Uses Boolean expression: ~q_0 & q_1 & (~q_2) & q_3 & q_4
-    This corresponds to bitstring 01010 (reading q_4 q_3 q_2 q_1 q_0)
-    
-    Grover's Algorithm Complexity:
-    - Search space size: N = 2^n
-    - Quantum queries: O(sqrt(N)) ≈ π/4 * sqrt(N)
-    - Classical queries: O(N) (brute force)
-    - Quadratic speedup factor
-    
-    Returns:
-    --------
-    circuit : PhaseOracle
-        Oracle circuit that marks solution by phase flip
+    Decode a Grover measurement bitstring back to (row, col) coordinates.
+
+    The bitstring is in Qiskit's little-endian order:
+        bits 0..m-1  -> row index i
+        bits m..2m-1 -> col index j
+
+    Parameters
+    ----------
+    bitstring : str   e.g. '0110' for m=2
+    m         : int   log2 of grid side length
+
+    Returns
+    -------
+    (row, col) : (int, int)
     """
-    expression = '~q_0 & q_1 & (~q_2) & q_3 & q_4'  # Target: 11010 (reversed indexing)
-    circuit = PhaseOracle(expression)  # Convenient Qiskit method for oracle creation
-    return circuit
-
-def createPhaseOracle(bitstring: str) -> PhaseOracleGate:
-    """Create a PhaseOracleGate that marks |bitstring⟩.
-    Reverses internally to account for Qiskit's little-endian ordering."""
-    n = len(bitstring)
-    terms = []
-    for i, bit in enumerate(bitstring[::-1]):  # reverse the string
-        var = f"x{i}"
-        terms.append(var if bit == '1' else f"~{var}")
-    expression = " & ".join(terms)
-    return PhaseOracleGate(expression)
-
-def diffusion_operator(qc, qubits):
-    """
-    Grover Diffusion Operator (Inversion About Average)
-    ===================================================
-    Amplifies amplitude of marked states by inverting about average amplitude.
-    
-    Mathematical Operation: D = 2|ψ⟩⟨ψ| - I
-    where |ψ⟩ = (1/sqrt(N)) Σ|x⟩ is equal superposition
-    
-    Effect: 
-    - States with amplitude above average get boosted
-    - States below average get suppressed
-    - Combined with oracle, amplifies probability of solution
-    
-    Implementation:
-    1. H^⊗n: Transform to computational basis
-    2. Conditional phase flip on |00...0⟩ state (using MCX with ancilla)
-    3. H^⊗n: Transform back to superposition basis
-    
-    Result: After k iterations with optimal k ≈ π/4*sqrt(N),
-    solution probability approaches 1.
-    
-    Parameters:
-    -----------
-    qc : QuantumCircuit
-        Circuit to append diffusion operator to
-    qubits : list
-        Indices of data qubits (excludes ancilla)
-        
-    Note: Ancilla assumed to be last qubit and already in |−⟩ state
-    """
-    n = len(qubits)
-    ancilla = qc.num_qubits - 1  # Assume ancilla is last qubit
-
-    # Step 1: Apply H to all data qubits (transform to computational basis)
-    for q in qubits:
-        qc.h(q)
-
-    # Step 2: Ancilla should be in |−⟩ (initialized outside this function)
-    # qc.x(ancilla); qc.h(ancilla)  # Done once at circuit start
-
-    # Step 3: Flip ancilla if all qubits are 0 (conditional phase flip)
-    # X gates: Transform condition from "all zeros" to "all ones" for MCX
-    for q in qubits:
-        qc.x(q)
-    qc.append(MCXGate(n), qubits + [ancilla])  # Multi-controlled X on all qubits
-    for q in qubits:
-        qc.x(q)
-
-    # Step 4: Apply H to all data qubits again (transform back to superposition)
-    for q in qubits:
-        qc.h(q)
-
-
-if __name__ == "__main__":
-    U, n = bv_secret_circuit()
-    circuit = QuantumCircuit(n+1,n)
-    circuit.x(0) 
-    circuit.h(0) # This brings qubit 0 to |-> state
-    circuit.h(range(1,n+1)) 
-    circuit.unitary(U,range(n+1),'Secret')
-    circuit.h(range(1,n+1))
-    circuit.measure(range(1,n+1), range(0,n)) 
-    display(circuit.draw('mpl')) 
-    counts = simulate_measurements(circuit,shots = 1)
-    print(counts)
-    print("The total depth is ", circuit.depth())
-    print("The total width is ", circuit.width())
+    row_bits = bitstring[:m][::-1]    # first m bits, reversed to big-endian
+    col_bits = bitstring[m:][::-1]    # last  m bits, reversed to big-endian
+    row = int(row_bits, 2)
+    col = int(col_bits, 2)
+    return row, col
