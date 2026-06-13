@@ -28,7 +28,6 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 from qiskit import  transpile
-from qiskit_aer import Aer
 from qiskit_aer import AerSimulator
 from qiskit_ibm_runtime import QiskitRuntimeService
 from qiskit_ibm_runtime import SamplerV2 as Sampler

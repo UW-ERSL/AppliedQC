@@ -93,8 +93,6 @@ def estimate_area(oracle, regs, shots):
     return ones / shots, counts, circ
 
 
-
-
 def make_measured_circuit(oracle, regs):
     x, y, flag = regs
     c = ClassicalRegister(1, "c")
@@ -121,7 +119,6 @@ def sampling_scaling(oracle, regs, shot_list, a_true, trials=20):
         rows.append((shots, rms, pred)); rms_errors.append(rms); predicted.append(pred)
 
     return rows, rms_errors, predicted
-
 
 
 def weighted_region_circuit(m, predicate, weight_fn, weight_max=None):
@@ -168,8 +165,6 @@ def weighted_region_circuit(m, predicate, weight_fn, weight_max=None):
         for q in zeros:
             qc.x(q)
     return qc, (x, y, flag, wt), weight_max
-
-
 
 
 
