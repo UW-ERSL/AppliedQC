@@ -179,8 +179,6 @@ def decode_void_measurement(bitstring, m):
     -------
     (row, col) : (int, int)
     """
-    row_bits = bitstring[:m][::-1]    # first m bits, reversed to big-endian
-    col_bits = bitstring[m:][::-1]    # last  m bits, reversed to big-endian
-    row = int(row_bits, 2)
-    col = int(col_bits, 2)
+    col = int(bitstring[:m], 2)   # high qubits → col
+    row = int(bitstring[m:], 2)   # low  qubits → row
     return row, col
