@@ -11,7 +11,7 @@
 # Gate-Based Quantum Computing (Chapters 7-21)
 # IBM Qiskit + Aer Simulator + IBM Quantum hardware access
 # ------------------------------------------------------------
-qiskit>=2.3.0
+qiskit[visualization]>=2.3.0
 qiskit-aer>=0.17.2
 qiskit-ibm-runtime>=0.37.0
 
