@@ -17,9 +17,11 @@ qiskit-ibm-runtime>=0.37.0
 
 # ------------------------------------------------------------
 # Quantum Annealing (Chapters 5-6)
-# D-Wave Ocean SDK (includes dimod, pyqubo, dwave-system, etc.)
+# D-Wave Ocean SDK (dimod, dwave-system, dwave-samplers, etc.)
+# pyqubo is NOT bundled in the SDK and must be listed separately
 # ------------------------------------------------------------
 dwave-ocean-sdk>=6.1.1
+pyqubo>=1.4.0
 
 # ------------------------------------------------------------
 # Scientific Computing
