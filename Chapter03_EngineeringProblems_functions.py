@@ -720,19 +720,16 @@ class Poisson2DFD:
     def assemble_stiffness(self):
         """Assemble stiffness matrix (interior nodes only)."""
         Nx, Ny = self.nx, self.ny
-        
-        # Grid spacing ratio
         r = self.hx**2 / self.hy**2
-        
-        # 1D tridiagonal with anisotropic diagonal
-        T = diags([2*(1+r)*np.ones(Nx), -np.ones(Nx-1), -np.ones(Nx-1)], 
-                  [0, 1, -1], format='csr')
+
+        # Clean 1D operators: tridiag(-1, 2, -1) in each direction
+        Tx = diags([2*np.ones(Nx), -np.ones(Nx-1), -np.ones(Nx-1)], [0, 1, -1], format='csr')
+        Ty = diags([2*np.ones(Ny), -np.ones(Ny-1), -np.ones(Ny-1)], [0, 1, -1], format='csr')
         I_x = eye(Nx, format='csr')
         I_y = eye(Ny, format='csr')
-        
-        # 2D Laplacian with anisotropic coupling
-        K = kron(I_y, T) + kron(diags([-r*np.ones(Ny-1), -r*np.ones(Ny-1)], 
-                                      [1, -1], format='csr'), I_x)
+
+        # K = I_y ⊗ Tx + r (Ty ⊗ I_x)
+        K = kron(I_y, Tx) + r * kron(Ty, I_x)
         return K
     
     def solve(self):
@@ -1594,7 +1591,8 @@ def truss3x2(E=200e9, A=0.0005):
 def truss3x3(E=200e9, A=0.0005):
     # Example usage with the 3x3 truss
     # Nodes: 9
-    # Elements: 26
+    # Elements: 28 (full ground structure: all 36 node pairs minus the 8
+    #               that pass through an intermediate collinear node)
     nodes = np.array([
         [0.0, 0.0],   # Node 0 (bottom left) - FIXED
         [2.0, 0.0],   # Node 1 (bottom center)
@@ -1608,13 +1606,11 @@ def truss3x3(E=200e9, A=0.0005):
     ])
 
     elements = [
-        (0, 1), (1, 2), (3, 4), (4, 5), (6, 7), (7, 8),  # Horizontal
-        (0, 3), (3, 6), (1, 4), (4, 7), (2, 5), (5, 8),  # Vertical
-        (0, 4), (1, 3), (1, 5), (2, 4), (3, 7), (4, 6), (4, 8), (5, 7),  # Diagonals
-        (0, 8), (2, 6), (0, 7), (1, 6), (1, 8), (2, 7)   # Long diagonals
+        (0, 1), (1, 2), (3, 4), (4, 5), (6, 7), (7, 8),          # Horizontal (6)
+        (0, 3), (1, 4), (2, 5), (3, 6), (4, 7), (5, 8),          # Vertical (6)
+        (0, 4), (1, 3), (1, 5), (2, 4), (3, 7), (4, 6), (4, 8), (5, 7),  # Short diagonals (8)
+        (0, 5), (0, 7), (1, 6), (1, 8), (2, 3), (2, 7), (3, 8), (5, 6),  # Long diagonals (8)
     ]
-
-    
 
     # Define problem
     fixed_dofs = [0, 1, 4, 5]  # Nodes 0 and 2 fixed
