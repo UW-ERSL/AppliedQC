@@ -6,8 +6,6 @@ from qiskit import QuantumCircuit, QuantumRegister, ClassicalRegister, transpile
 from qiskit.quantum_info import SparsePauliOp
 from qiskit.circuit.library import StatePreparation
 
-from Chapter14_MatrixEncoding_functions import (LCU_Ax)
-
 def postprocess_measurements(counts, metadata):
     """Post-process measurement results.
     
@@ -106,33 +104,3 @@ def execute_fTAx_from_result(result, metadata):
         return inner_product, success_prob
     else:
         return 0, 0
-# Example usage
-if __name__ == "__main__":
-    import numpy as np
-    
-    # Define problem
-    A = np.array([
-        [1, 0, 0, 0.5],
-        [0, 1, 0, 0],
-        [0, 0, 1, 0],
-        [0.5, 0, 0, 1]
-    ], dtype=float)
-    
-    x = np.array([0.6, 0.8, 0, 0], dtype=complex)
-    f = np.array([1, 0, 0.5, 0.2])
-    
-    # Classical computation
-    expected = np.dot(f, A @ x)
-    
-    print("="*60)
-    print("Computing f^T * A * x")
-    print("="*60)
-    print(f"Expected: {expected:.4f}")
-    print(f"Expected magnitude: {np.abs(expected):.4f}")
-    
-    # Quantum computation
-    result, prob = LCU_fTAx(f, A, x, shots=10000)
-    
-    print(f"\nQuantum result: {result:.4f}")
-    print(f"Error: {abs(result - np.abs(expected)):.4f}")
-    print(f"Success probability: {prob:.4f}")
