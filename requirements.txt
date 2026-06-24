@@ -14,11 +14,19 @@
 qiskit[visualization]>=2.3.0
 qiskit-aer>=0.17.2
 qiskit-ibm-runtime>=0.37.0
+qiskit-algorithms
+
+
 
 # ------------------------------------------------------------
 # PyEncode for Structured encodings (Chapters 13-14)
 # ------------------------------------------------------------
 git+https://github.com/UW-ERSL/PyEncode.git
+
+# ------------------------------------------------------------
+# Quantum Signal Processing (Chapters 19)
+# ------------------------------------------------------------
+qsp
 
 # ------------------------------------------------------------
 # Quantum Annealing (Chapters 5-6)
