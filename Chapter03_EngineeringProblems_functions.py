@@ -1827,9 +1827,8 @@ class MicrostructureGenerator:
         self.nx = nx
         self.ny = ny
         self.inclusion_fraction = inclusion_fraction
-        self.data = self.generate(type=micro_type)
+        self.generate(type=micro_type)
         
-
     def generate(self, type='disk'):
         nx, ny = self.nx, self.ny
      
@@ -1841,9 +1840,6 @@ class MicrostructureGenerator:
             center_x, center_y = nx/2, ny/2
             radius = ((self.inclusion_fraction*nx*ny)/np.pi)**0.5
             micro = (((X-center_x)**2 + (Y-center_y)**2) > radius**2).astype(float)  # disk inclusion
-            function = lambda x, y: ((x - center_x)**2 + (y - center_y)**2) > radius**2
-            # Compute and print actual volume fraction
-
         elif type == 'square':
             micro = np.ones((nx, ny))
             side = int((self.inclusion_fraction * nx * ny)**0.5)
@@ -1884,8 +1880,6 @@ class MicrostructureGenerator:
             if n_elements > 0:
                 idx = np.random.choice(nx * ny, size=n_elements, replace=False)
                 micro.flat[idx] = 0
-
-
         elif type == 'primitive_tpms':
             # Primitive/Egg-crate TPMS: cos(x) + cos(y) = t
             x = np.linspace(0, 2*np.pi, nx, endpoint=False)
@@ -1895,12 +1889,9 @@ class MicrostructureGenerator:
             # Adjust t to achieve target volume fraction
             # For primitive: VF ≈ 0.5 - t/4 (approximate)
             t = 2 * (0.5 - self.inclusion_fraction)
-
             phi = np.cos(X) + np.cos(Y) - t
             micro = (phi > 0).astype(float)
-
             print(f"TPMS thickness parameter t: {t:.3f}")
-
         elif type == 'gyroid_tpms':
             # Gyroid-like 2D: sin(x)cos(y) + cos(x)sin(y) = t
             x = np.linspace(0, 2*np.pi, nx, endpoint=False)
@@ -1951,11 +1942,11 @@ class MicrostructureGenerator:
             print(f"TPMS thickness parameter t: {t:.3f}")
         else:
             raise ValueError(f"Unknown microstructure type: {type}")
-
+        self.data = micro
         inclusion_fraction_actual = 1- np.sum(micro) / (nx * ny)
         print(f"Target inclusion fraction: {self.inclusion_fraction:.3f}")
         print(f"Actual inclusion fraction: {inclusion_fraction_actual:.3f}")
-        return micro
+  
 
     def plot(self):
         nx, ny = self.nx, self.ny
