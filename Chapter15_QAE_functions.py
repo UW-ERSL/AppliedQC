@@ -1,6 +1,6 @@
 import numpy as np
 import matplotlib.pyplot as plt
-
+from matplotlib.patches import Wedge, Arc
 from qiskit import QuantumCircuit, QuantumRegister, ClassicalRegister
 from qiskit.circuit.library import QFT
 from qiskit_aer import AerSimulator
@@ -9,216 +9,214 @@ from qiskit.circuit.library import StatePreparation
 from qiskit.quantum_info import SparsePauliOp
 from qiskit import  transpile
 from qiskit import QuantumCircuit, QuantumRegister, ClassicalRegister
-
+from qiskit_algorithms import IterativeAmplitudeEstimation, EstimationProblem
+from qiskit.primitives import StatevectorSampler
 
 from Chapter08_QuantumGates_functions import (simulate_statevector, simulate_measurements, runCircuitOnIBMQuantum,
                                               findActualHardwareRequirements, plot_measurement_results)
 
 from Chapter14_MatrixEncoding_functions import LCU_Ax
 
+"""
+Iterative Quantum Amplitude Estimation (IQAE) -- classical statistics demo.
 
-def disk_predicate(i0, j0, r):
-    return lambda i, j: (i - i0)**2 + (j - j0)**2 <= r*r
+This reproduces the worked-by-hand example and draws the theta confidence
+bracket for each round.  No quantum circuit / Grover operator is built: the
+ONLY role Grover plays is to make a measurement succeed with probability
+sin^2((2k+1)*theta).  We sample that directly with a binomial draw, which is
+all that is needed to illustrate the scheduling and interval-squeezing logic.
 
-def annulus_predicate(i0, j0, r1, r2):
-    return lambda i, j: r1*r1 <= (i - i0)**2 + (j - j0)**2 <= r2*r2
+Set fixed_counts=[23, 36, 51] to reproduce the exact figure in the text;
+set fixed_counts=None and pick any max_rounds to let the reader run their own.
+"""
 
-def square_with_hole_predicate(i0, j0, r):
-    return lambda i, j: not ((i - i0)**2 + (j - j0)**2 <= r*r)
+import numpy as np
+import matplotlib.pyplot as plt
 
-def region_area(m, predicate):
-    N = 1 << m
-    return sum(predicate(i, j) for i in range(N) for j in range(N))
-
-
-# ---- Geometry-agnostic black-box oracle -------------------------------------
-def region_oracle(m, predicate):
-    """
-    Mark grid cells (i, j) on a 2^m x 2^m grid where predicate(i, j) is True.
-    Registers: flag (1 qubit, TOP wire), x (column i), y (row j).
-
-    Demo oracle: evaluates `predicate` classically and marks matching basis
-    states with multi-controlled flips. Exact and works for ANY predicate, but
-    its gate count grows with the number of marked cells -- adequate for the
-    sampling-cost argument here, not an efficient oracle.
-    """
-    flag = QuantumRegister(1, "flag")
-    x    = QuantumRegister(m, "x")
-    y    = QuantumRegister(m, "y")
-    qc   = QuantumCircuit(flag, x, y)
-
-    N = 1 << m
-    for i in range(N):
-        for j in range(N):
-            if not predicate(i, j):
-                continue
-            bits  = [(x[b], (i >> b) & 1) for b in range(m)] + \
-                    [(y[b], (j >> b) & 1) for b in range(m)]
-            zeros = [q for (q, bit) in bits if bit == 0]
-            for q in zeros:                       # target pattern -> all-ones
-                qc.x(q)
-            qc.mcx([q for (q, _) in bits], flag[0])
-            for q in zeros:                       # uncompute
-                qc.x(q)
-    return qc, (x, y, flag)
-
-# ---- Geometry wrappers: each shape is ONE predicate -------------------------
-def disk(m, i0, j0, r):
-    return region_oracle(m, disk_predicate(i0, j0, r))
-
-def annulus(m, i0, j0, r_in, r_out):
-    return region_oracle(m, annulus_predicate(i0, j0, r_in, r_out))
-
-def square_with_hole(m, i0, j0, r):
-    return region_oracle(m, square_with_hole_predicate(i0, j0, r))
+HALF_PI = np.pi / 2.0
 
 
-# ---- Naive estimation: prepare, measure the flag, count ---------------------
-def estimate_area(oracle, regs, shots):
-    """
-    Quantum-assisted Monte Carlo. Build the uniform superposition over all
-    N^2 cells, apply the oracle, measure ONLY the flag, and return the
-    fraction of |1> outcomes -- which equals the area fraction.
-    """
-    x, y, flag = regs
-    c = ClassicalRegister(1, "c")
-    circ = QuantumCircuit(flag, x, y, c)
-    circ.h(x)
-    circ.h(y)                                  
-    circ.compose(oracle, inplace=True)
-    circ.measure(flag[0], c[0])
-    
-    counts = simulate_measurements(circ, shots=shots)  
-    ones   = counts.get('1', 0)
-    return ones / shots, counts, circ
+# ----------------------------------------------------------------------
+# Statistics
+# ----------------------------------------------------------------------
+def confidence_interval(n_success, N, z=1.96):
+    """95% Wald interval on the success probability (z = 1.96)."""
+    p_hat = n_success / N
+    se = np.sqrt(p_hat * (1.0 - p_hat) / N)
+    lo = max(0.0, p_hat - z * se)
+    hi = min(1.0, p_hat + z * se)
+    return p_hat, lo, hi
 
 
-def make_measured_circuit(oracle, regs):
-    x, y, flag = regs
-    c = ClassicalRegister(1, "c")
-    circ = QuantumCircuit(flag, x, y, c)
-    circ.h(x); circ.h(y)
-    circ.compose(oracle, inplace=True)
-    circ.measure(flag[0], c[0])
-    return circ
-
-def sampling_scaling(oracle, regs, shot_list, a_true, trials=20):
-    sim  = AerSimulator()
-    circ = make_measured_circuit(oracle, regs).decompose(reps=3)
-    tcirc = transpile(circ, sim)                 # transpile ONCE
-
-    rows, rms_errors, predicted = [], [], []
-    for shots in shot_list:
-        errs = []
-        for _ in range(trials):
-            counts = sim.run(tcirc, shots=shots).result().get_counts()
-            a_hat  = counts.get('1', 0) / shots
-            errs.append(a_hat - a_true)
-        rms  = np.sqrt(np.mean(np.square(errs)))
-        pred = np.sqrt(a_true * (1 - a_true) / shots)
-        rows.append((shots, rms, pred)); rms_errors.append(rms); predicted.append(pred)
-
-    return rows, rms_errors, predicted
+# ----------------------------------------------------------------------
+# Scheduling: largest power k whose magnified bracket stays on one
+# monotone arc of sin^2 (turning points sit at multiples of pi/2).
+# ----------------------------------------------------------------------
+def largest_valid_k(theta_lo, theta_hi, k_cap=None):
+    width = theta_hi - theta_lo
+    if width <= 0:
+        k_max = 10**6
+    else:
+        k_max = max(int(((HALF_PI / width) - 1.0) / 2.0), 0)
+    if k_cap is not None:
+        k_max = min(k_max, k_cap)
+    for k in range(k_max, -1, -1):
+        f = 2 * k + 1
+        m_lo = int(np.floor(f * theta_lo / HALF_PI + 1e-12))
+        m_hi = int(np.floor(f * theta_hi / HALF_PI - 1e-12))
+        if m_lo == m_hi:                       # both ends on the same arc
+            return k, m_lo
+    return 0, int(np.floor(theta_lo / HALF_PI))
 
 
-def weighted_region_circuit(m, predicate, weight_fn, weight_max=None):
-    """
-    Build a circuit that amplitude-encodes a coordinate weight over a region.
-
-    Registers: wt (weight ancilla, TOP wire), flag (region membership),
-    x, y (coordinates).
-    For each cell (i,j) with predicate True, the wt ancilla is rotated so that
-        P(wt = 1 | cell (i,j)) = h(i,j) / weight_max   in [0, 1].
-    On the uniform input, the JOINT probability P(flag=1 AND wt=1) equals
-        (1/N^2) * sum_{inside} h(i,j) / weight_max  =  <h * 1_region> / weight_max.
-
-    weight_fn : h(i, j) -> real >= 0   (the quantity being averaged)
-    weight_max: scale so h/weight_max lies in [0,1]; if None, computed from the
-                max of h over inside cells.
-    """
-    N = 1 << m
-    inside = [(i, j) for i in range(N) for j in range(N) if predicate(i, j)]
-
-    if weight_max is None:
-        weight_max = max((weight_fn(i, j) for (i, j) in inside), default=1.0)
-        weight_max = weight_max if weight_max > 0 else 1.0
-
-    wt   = QuantumRegister(1, "wt")
-    flag = QuantumRegister(1, "flag")
-    x    = QuantumRegister(m, "x")
-    y    = QuantumRegister(m, "y")
-    qc   = QuantumCircuit(wt, flag, x, y)
-
-    for (i, j) in inside:
-        ctrl_qubits = list(x) + list(y)
-        pattern     = [(i >> b) & 1 for b in range(m)] + [(j >> b) & 1 for b in range(m)]
-        zeros = [q for q, bit in zip(ctrl_qubits, pattern) if bit == 0]
-
-        for q in zeros:
-            qc.x(q)
-        # (1) flag this cell as inside
-        qc.mcx(ctrl_qubits, flag[0])
-        # (2) rotate the weight ancilla by the cell's weight, controlled on the cell
-        frac  = weight_fn(i, j) / weight_max          # in [0, 1]
-        theta = 2.0 * np.arcsin(np.sqrt(frac))        # exact: P(wt=1) = frac
-        qc.mcry(theta, ctrl_qubits, wt[0])            # multi-controlled Ry
-        for q in zeros:
-            qc.x(q)
-    return qc, (x, y, flag, wt), weight_max
+# ----------------------------------------------------------------------
+# Inversion: probability interval -> theta interval on arc m.
+# ----------------------------------------------------------------------
+def invert(p_lo, p_hi, k, m):
+    f = 2 * k + 1
+    a_lo = np.arcsin(np.sqrt(np.clip(p_lo, 0.0, 1.0)))
+    a_hi = np.arcsin(np.sqrt(np.clip(p_hi, 0.0, 1.0)))
+    left = m * HALF_PI
+    if m % 2 == 0:                              # rising arc
+        phi_lo, phi_hi = left + a_lo, left + a_hi
+    else:                                       # falling arc: endpoints swap
+        phi_lo, phi_hi = left + (HALF_PI - a_hi), left + (HALF_PI - a_lo)
+    return phi_lo / f, phi_hi / f
 
 
+# ----------------------------------------------------------------------
+# Driver
+# ----------------------------------------------------------------------
+def iqae(theta_true, N=100, z=1.96, eps_target=0.0, max_rounds=3,
+         seed=0, fixed_counts=None, k_cap=None):
+    rng = np.random.default_rng(seed)
+    theta_lo, theta_hi = 0.0, HALF_PI
+    rounds = []
+    for r in range(max_rounds):
+        k, m = largest_valid_k(theta_lo, theta_hi, k_cap)
+        f = 2 * k + 1
+        p_true = np.sin(f * theta_true) ** 2
+        if fixed_counts is not None and r < len(fixed_counts):
+            n_succ = int(fixed_counts[r])
+        else:
+            n_succ = int(rng.binomial(N, p_true))
+        p_hat, p_lo, p_hi = confidence_interval(n_succ, N, z)
+        t_lo, t_hi = invert(p_lo, p_hi, k, m)
+        new_lo, new_hi = max(theta_lo, t_lo), min(theta_hi, t_hi)
+        if new_lo < new_hi:                     # normal case: intersect
+            theta_lo, theta_hi = new_lo, new_hi
+        else:                                   # rare statistical miss
+            theta_lo, theta_hi = t_lo, t_hi
+            print(f"  [round {r+1}: confidence miss, interval reset]")
+        width_p = np.sin(theta_hi) ** 2 - np.sin(theta_lo) ** 2
+        rounds.append(dict(r=r + 1, k=k, f=f, n=n_succ, N=N, p_hat=p_hat,
+                           p_true=p_true,
+                           arc="rising" if m % 2 == 0 else "falling",
+                           theta_lo=theta_lo, theta_hi=theta_hi,
+                           width_p=width_p))
+        if eps_target > 0.0 and width_p < eps_target:
+            break
+    return rounds
 
-def _measured_weighted_circuit(qc, regs):
-    """Attach uniform prep + flag/wt measurements to a weighted region circuit."""
-    x, y, flag, wt = regs
-    cf = ClassicalRegister(1, "cf")
-    cw = ClassicalRegister(1, "cw")
-    circ = QuantumCircuit(wt, flag, x, y, cf, cw)
-    circ.h(x); circ.h(y)
-    circ.compose(qc, inplace=True)
-    circ.measure(flag[0], cf[0])
-    circ.measure(wt[0],   cw[0])
-    return circ
+
+def print_table(rounds):
+    head = f"{'Rnd':>3} {'k':>3} {'2k+1':>5} {'succ/N':>8} {'p_hat':>6} " \
+           f"{'p_true':>7} {'arc':>8} {'theta bracket':>22} {'width_p':>8}"
+    print(head)
+    print("-" * len(head))
+    for x in rounds:
+        br = f"[{x['theta_lo']:.3f}, {x['theta_hi']:.3f}]"
+        print(f"{x['r']:>3} {x['k']:>3} {x['f']:>5} "
+              f"{str(x['n'])+'/'+str(x['N']):>8} {x['p_hat']:>6.2f} "
+              f"{x['p_true']:>7.3f} {x['arc']:>8} {br:>22} {x['width_p']:>8.4f}")
 
 
-def _counts_to_expectation(counts, weight_max, shots):
-    n_flag = n_joint = 0
-    for bits, c in counts.items():
-        cw_bits, cf_bits = bits.split()        # "cw cf": later-registered creg on the left
-        if cf_bits == '1':
-            n_flag += c
-            if cw_bits == '1':
-                n_joint += c
-    area_fraction   = n_flag / shots
-    weighted_expect = (n_joint / shots) * weight_max
-    return area_fraction, weighted_expect
+def plot_rounds_linear(rounds, theta_true):
+    fig, ax = plt.subplots(figsize=(7.0, 0.7 * len(rounds) + 1.4))
+    cap = 0.18
+    for x in rounds:
+        y = x["r"]
+        ax.plot([x["theta_lo"], x["theta_hi"]], [y, y],
+                lw=5, color="#2c6fbb", solid_capstyle="butt", alpha=0.85)
+        ax.plot([x["theta_lo"]] * 2, [y - cap, y + cap], color="#2c6fbb", lw=1.5)
+        ax.plot([x["theta_hi"]] * 2, [y - cap, y + cap], color="#2c6fbb", lw=1.5)
+        ax.text(x["theta_hi"] + 0.004, y,
+                f"$k={x['k']}$, width$_p$={x['width_p']:.3f}",
+                va="center", ha="left", fontsize=8.5)
+    ax.axvline(theta_true, color="#c0392b", ls="--", lw=1.4,
+               label=fr"true $\theta = {theta_true}$")
+    r1 = rounds[0]
+    pad_l, pad_r = 0.05, 0.14
+    ax.set_xlim(r1["theta_lo"] - pad_l, r1["theta_hi"] + pad_r)
+    ax.set_yticks([x["r"] for x in rounds])
+    ax.set_yticklabels([f"Round {x['r']}" for x in rounds])
+    ax.invert_yaxis()
+    ax.set_xlabel(r"amplitude angle  $\theta$")
+    ax.set_title("IQAE confidence bracket on $\\theta$, by round")
+    ax.legend(loc="lower right", fontsize=9, frameon=False)
+    ax.grid(axis="x", ls=":", alpha=0.4)
+    for s in ("top", "right", "left"):
+        ax.spines[s].set_visible(False)
+    fig.tight_layout()
+    return
 
+def plot_rounds_wedge(rounds, theta_true):
+    """Wedge figure from iqae() output.
+    `rounds` is the list of dicts returned by iqae(); each has keys
+    r, k, theta_lo, theta_hi, width_p.  Top row = true scale, bottom = zoomed."""
+    R = 1.0
+    BLUE, RED = '#2c6fbb', '#c0392b'
+    FS_TITLE, FS_KET = 28, 27
 
-def quantum_centroid(m, predicate, shots, _sim=None):
-    """
-    Estimate the region centroid by amplitude-encoding the coordinate weights
-    i and j. Builds and transpiles each weighted circuit ONCE (Fix B), then
-    samples -- so repeated calls / shot sweeps don't re-transpile the heavy
-    multi-controlled-Ry circuit.
-    """
-    sim = _sim or AerSimulator()
+    ncols = len(rounds)
+    fig, axes = plt.subplots(2, ncols, figsize=(5.7 * ncols, 12))
+    if ncols == 1:                       # keep axes 2D when only one round
+        axes = axes.reshape(2, 1)
 
-    # Build + transpile each weighted circuit a single time.
-    qc_i, regs_i, wmax_i = weighted_region_circuit(m, predicate, lambda i, j: i)
-    qc_j, regs_j, wmax_j = weighted_region_circuit(m, predicate, lambda i, j: j)
+    def title_for(x):
+        return f"Round {x['r']}  ($k={x['k']}$)\nwidth$_p$ = {x['width_p']:.3f}"
 
-    tcirc_i = transpile(_measured_weighted_circuit(qc_i, regs_i).decompose(reps=3), sim)
-    tcirc_j = transpile(_measured_weighted_circuit(qc_j, regs_j).decompose(reps=3), sim)
+    # ---------- ROW 0: WITHOUT zoom -- full plane, true scale ----------
+    for ax, x in zip(axes[0], rounds):
+        lo, hi = x['theta_lo'], x['theta_hi']
+        ax.plot([0, R], [0, 0], color='0.55', lw=2.0)
+        ax.plot([0, 0], [0, R], color='0.55', lw=2.0)
+        ax.add_patch(Arc((0, 0), 2*R, 2*R, theta1=0, theta2=90, color='0.8', lw=1.6))
+        ax.add_patch(Wedge((0, 0), R, np.degrees(lo), np.degrees(hi),
+                           facecolor=BLUE, alpha=0.35, edgecolor='none'))
+        for e in (lo, hi):
+            ax.plot([0, R*np.cos(e)], [0, R*np.sin(e)], color=BLUE, lw=2.4)
+        ax.plot([0, R*np.cos(theta_true)], [0, R*np.sin(theta_true)],
+                color=RED, ls='--', lw=2.4)
+        ax.text(1.03, -0.03, r"$|s^\perp\rangle$", fontsize=FS_KET, va='top')
+        ax.text(-0.03, 1.06, r"$|s\rangle$", fontsize=FS_KET, ha='right')
+        ax.set_xlim(-0.10, 1.22); ax.set_ylim(-0.10, 1.20)
+        ax.set_aspect('equal'); ax.axis('off')
+        ax.set_title(title_for(x), fontsize=FS_TITLE)
 
-    counts_i = sim.run(tcirc_i, shots=shots).result().get_counts()
-    counts_j = sim.run(tcirc_j, shots=shots).result().get_counts()
+    # ---------- ROW 1: WITH zoom -- each panel magnifies ----------
+    for ax, x in zip(axes[1], rounds):
+        lo, hi = x['theta_lo'], x['theta_hi']
+        cx = np.degrees(theta_true)
+        half = max(np.degrees(hi - lo) * 1.8, 2.5)
+        a0, a1 = cx - half, cx + half
+        ax.plot([0, R*np.cos(np.radians(a0))], [0, R*np.sin(np.radians(a0))], color='0.85', lw=1.6)
+        ax.plot([0, R*np.cos(np.radians(a1))], [0, R*np.sin(np.radians(a1))], color='0.85', lw=1.6)
+        ax.add_patch(Arc((0, 0), 2*R, 2*R, theta1=a0, theta2=a1, color='0.6', lw=1.6))
+        ax.add_patch(Wedge((0, 0), R, np.degrees(lo), np.degrees(hi),
+                           facecolor=BLUE, alpha=0.30, edgecolor='none'))
+        for e in (lo, hi):
+            ax.plot([0, R*np.cos(e)], [0, R*np.sin(e)], color=BLUE, lw=2.6)
+        ax.plot([0, R*np.cos(theta_true)], [0, R*np.sin(theta_true)],
+                color=RED, ls='--', lw=2.6)
+        ax.set_xlim(np.cos(np.radians(a1))*R - 0.02, np.cos(np.radians(a0))*R + 0.02)
+        ax.set_ylim(np.sin(np.radians(a0))*R - 0.02, np.sin(np.radians(a1))*R + 0.02)
+        ax.set_aspect('equal'); ax.axis('off')
 
-    area, num_i = _counts_to_expectation(counts_i, wmax_i, shots)
-    _,    num_j = _counts_to_expectation(counts_j, wmax_j, shots)
-
-    ibar = num_i / area
-    jbar = num_j / area
-    return (ibar, jbar), area
+    fig.tight_layout(rect=[0, 0, 1, 0.95])
+    fig.subplots_adjust(hspace=0.55)
+   
+    return fig
 
 
 

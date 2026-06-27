@@ -106,6 +106,14 @@ def estimateCircuitGates(circuit):
         'depth': depth,
         'transpiled_circuit': transpiled_circuit,
     }
+
+    print("--- Circuit Analysis ---")
+    print(f"Qubits: {result['num_qubits']}")
+    print(f"Single-qubit gates: {result['single_gate_count']}")
+    print(f"CX/ECR gates: {result['cx_gates']}")
+    print(f"Total gates: {result['total_gates']}")
+    print(f"Depth: {result['depth']}")
+    
     return result 
 
 
