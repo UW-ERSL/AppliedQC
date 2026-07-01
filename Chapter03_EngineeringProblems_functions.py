@@ -625,53 +625,109 @@ class TrussFEM:
 
 
 class Poisson1DFD:
-    def __init__(self, n_elements, f= 1, length=1.0):
+    def __init__(self, n_elements, f=1, length=1.0, boundary='dirichlet'):
         """
-        1D Poisson equation FEM model
-        
+        1D Poisson equation finite-difference model.
+
         Parameters:
         -----------
         n_elements : int
-            Number of finite elements
-        f : float or array-like
-            Source term (right-hand side)
+            Number of finite elements (intervals).
+        f : float, array-like, or callable
+            Source term f(x). A scalar is treated as a uniform load; an array
+            must be sampled at the node coordinates; a callable is evaluated at
+            the node coordinates automatically.
         length : float
-            Length of the domain
+            Length of the domain.
+        boundary : str
+            'dirichlet' (default): u(0)=u(L)=0, the two end nodes are eliminated.
+            'periodic'           : u(x+L)=u(x); the ring couples node N back to
+                                   node 1, no node is eliminated, and the load
+                                   must be self-equilibrated (sum(f)=0). The
+                                   solution is returned in the zero-mean gauge.
         """
         self.n_elements = n_elements
         self.length = length
-        self.n_nodes = n_elements + 1
-        self.node_coords = np.linspace(0, length, self.n_nodes)
-        self.h = length / n_elements
-        self.f = f* np.ones(self.n_nodes)
-        self.fixed_dofs = [0, self.n_nodes - 1]  # Dirichlet BCs at both ends
-    
+        self.boundary = boundary.lower()
+
+        if self.boundary == 'periodic':
+            # Ring: node N+1 coincides with node 1, so N nodes for N intervals.
+            self.n_nodes = n_elements
+            self.node_coords = np.linspace(0, length, self.n_nodes, endpoint=False)
+            self.h = length / n_elements
+            self.fixed_dofs = []                       # no boundary on a ring
+        else:                                          # 'dirichlet'
+            self.n_nodes = n_elements + 1
+            self.node_coords = np.linspace(0, length, self.n_nodes)
+            self.h = length / n_elements
+            self.fixed_dofs = [0, self.n_nodes - 1]    # Dirichlet BCs at both ends
+
+        # Source term: scalar, array, or callable f(x).
+        if callable(f):
+            self.f = f(self.node_coords)
+        else:
+            self.f = f * np.ones(self.n_nodes)
+
     def assemble_stiffness(self):
-        """Assemble global stiffness matrix."""
-        # K = 2 * np.eye(self.n_nodes)
-        # for i in range(self.n_nodes - 1):
-        #     K[i, i+1] = -1
-        #     K[i+1, i] = -1
-        diagonals = [2 * np.ones(self.n_nodes), -1 * np.ones(self.n_nodes-1), -1 * np.ones(self.n_nodes-1)]
+        """Assemble the (sparse) stiffness matrix."""
+        n = self.n_nodes
+        diagonals = [2 * np.ones(n), -1 * np.ones(n - 1), -1 * np.ones(n - 1)]
         K = diags(diagonals, [0, 1, -1], format='csr')
+        if self.boundary == 'periodic':
+            # Wrap-around couplings: node N connects back to node 1.
+            K = K.tolil()
+            K[0, n - 1] = -1.0
+            K[n - 1, 0] = -1.0
+            K = K.tocsr()
         return K
 
     def solve(self):
-        """Solve the FEM system."""
+        """Solve the finite-difference system."""
         K = self.assemble_stiffness()
-        rhs = (self.h **2) * self.f.copy()
-        
-        # Apply boundary conditions
+        rhs = (self.h ** 2) * self.f.copy()
+
+        if self.boundary == 'periodic':
+            return self._solve_periodic(K, rhs)
+
+        # Dirichlet: eliminate the fixed end nodes.
         free_dofs = list(set(range(self.n_nodes)) - set(self.fixed_dofs))
-        
         K_ff = K[np.ix_(free_dofs, free_dofs)]
         f_f = rhs[free_dofs]
-        
         u_f = spsolve(K_ff, f_f)
 
         u = np.zeros(self.n_nodes)
         u[free_dofs] = u_f
         return u
+
+    def _solve_periodic(self, K, rhs, tol=1e-8):
+        """
+        Solve the singular periodic system in the zero-mean gauge.
+
+        The circulant operator annihilates constants, so (i) the load must be
+        self-equilibrated for a solution to exist, and (ii) the solution is
+        unique only up to an additive constant. We enforce both through a
+        bordered (Lagrange-multiplier) system:
+
+            [ K   1 ] [u ]   [rhs]
+            [ 1^T 0 ] [mu] = [ 0 ]
+
+        whose lower row imposes the zero-mean gauge sum(u)=0.
+        """
+        n = self.n_nodes
+        # Solvability: the load must satisfy sum(f) = 0  (i.e. integral f dx = 0).
+        if np.abs(rhs.sum()) > tol * max(1.0, np.abs(rhs).sum()):
+            raise ValueError(
+                "Periodic load is not self-equilibrated (sum(f) != 0); "
+                "no steady periodic solution exists. "
+                f"Got sum(f) = {self.f.sum():.3e}.")
+
+        Kd = K.toarray()                               # small N: dense is fine
+        ones = np.ones((n, 1))
+        Aug = np.block([[Kd, ones], [ones.T, np.zeros((1, 1))]])
+        rhs_aug = np.concatenate([rhs, [0.0]])
+        sol = np.linalg.solve(Aug, rhs_aug)
+        return sol[:n]                                 # zero-mean solution
+
     def plot_solution(self, u):
         """Plot the solution."""
         plt.figure(figsize=(8, 5))
@@ -681,6 +737,7 @@ class Poisson1DFD:
         plt.ylabel('u(x)')
         plt.grid(True)
         plt.show()
+
 
 class Poisson2DFD:
 
