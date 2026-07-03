@@ -43,7 +43,6 @@ Key Parameters:
 - m: Number of ancilla qubits for QPE precision (Δλ ~ 1/2^m)
 - λ_upper: Upper bound on |λ|
 - λ_lower: Lower bound on |λ| (typically estimated from data)
-- P0: Probability cutoff for filtering QPE results
 
 Success Probability:
 -------------------
@@ -110,7 +109,6 @@ class myHHL:
 	Key Innovation:
 	Instead of hardcoding rotation angles, this implementation:
 	- Runs QPE first to identify dominant eigenvalues
-	- Prunes low-probability eigenvalues (below P0 threshold)
 	- Computes optimal rotation angles for identified eigenvalues
 	- Constructs HHL circuit with these targeted rotations
 	
@@ -130,7 +128,7 @@ class myHHL:
 		log₂(N) - qubits for encoding vectors
 	"""
 	def __init__(self, A, b, lambdaUpper,
-			  m = 3,P0 = 0.1,nShots = 1000):
+			  m = 3,nShots = 1000):
 		"""
 		Initialize HHL solver with problem data and parameters
 		
@@ -153,10 +151,6 @@ class myHHL:
 			QPE precision bits. Phase resolution = 1/2^m
 			Trade-off: Higher m → better accuracy but deeper circuits
 			Typical: m=3-5 for small problems, m=8-10 for production
-		P0 : float (default 0.1)
-			Probability cutoff for eigenvalue filtering
-			QPE results with P < P0 are discarded
-			Reduces noise from spurious eigenvalue estimates
 		nShots : int (default 1000)
 			Number of circuit shots for both QPE and HHL
 			More shots → better statistics, longer runtime
@@ -178,7 +172,6 @@ class myHHL:
 		self.N = self.A.shape[0]
 		self.n = int(np.log2(self.N))  # Qubits needed for b and solution
 		self.dataOK = True
-		self.probabilityCutoff = P0  # For pruning QPE eigenphases
 		
 		# Validation: Check N is power of 2
 		if np.abs(2**self.n - self.A.shape[0]) > 1e-10: 
@@ -355,10 +348,9 @@ class myHHL:
 		Filters and sorts eigenvalue estimates based on:
 		1. Measurement frequency (probability)
 		2. Validity (non-zero eigenvalues)
-		3. Probability threshold P0
 		
 		Creates self.thetaTilde: array of normalized phases θ = λ/λ_upper
-		Only includes phases with P > P0 and θ ≠ 0
+		Only includes phases with θ ≠ 0
 		"""
 		# Sort by measurement count (descending)
 		self.QPECountsSorted = {k: v for k, v in sorted(self.QPECounts.items(), 
@@ -369,8 +361,8 @@ class myHHL:
 			thetaValue = int(key, 2)/(2**self.m)  # Binary to decimal, normalize
 			probability = self.QPECountsSorted[key]/self.nQPEShots
 			
-			# Filter: skip zero eigenvalues (singular matrix) and low-probability estimates
-			if ((thetaValue == 0) or (probability < self.probabilityCutoff)):
+			# Filter: skip zero eigenvalues (division by zero in the HHL algorithm)
+			if (thetaValue == 0):
 				continue
 			self.thetaTilde  = np.append(self.thetaTilde,thetaValue)
 	
@@ -389,7 +381,6 @@ class myHHL:
 		
 		Key Innovation - Adaptive Rotations:
 		Instead of uniform rotations, uses actual QPE estimates to:
-		- Skip spurious low-probability eigenvalues
 		- Skip eigenvalues below λ_lower (would give invalid rotations)
 		- Optimize rotation angles for detected eigenvalues
 		
@@ -404,8 +395,8 @@ class myHHL:
 			thetaValue = int(key, 2)/(2**self.m)  # Normalized phase
 			probability = self.QPECountsSorted[key]/self.nQPEShots
 			
-			# Filter low-probability and zero eigenvalues
-			if (thetaValue == 0) or (probability < self.probabilityCutoff):
+			# Skip zero eigenvalues (division by zero)
+			if (thetaValue == 0):
 				continue
 				
 			# Convert normalized phase back to eigenvalue estimate
@@ -576,7 +567,6 @@ if __name__ == "__main__":
 		b = np.array([1/np.sqrt(2),1/np.sqrt(2)])
 		lambdaUpper = 2
 		m = 2
-		P0 = 0.1
 	elif (example == 2):
 		A = np.array([[2,-1],[-1,2]])
 		v0 = np.array([1/np.sqrt(2),1/np.sqrt(2)])
@@ -585,7 +575,6 @@ if __name__ == "__main__":
 		b = np.array([-1/np.sqrt(2),1/np.sqrt(2)])
 		lambdaUpper = 6
 		m = 5
-		P0 = 0.1
 	elif (example == 3):
 		A = np.array([[1,0,0,-0.5],[0,1,0,0],[0,0,1,0],[-0.5,0,0,1]])
 		v0 = np.array([1/np.sqrt(2),0,0,1/np.sqrt(2)])
@@ -598,7 +587,6 @@ if __name__ == "__main__":
 		b = a[0]*v0 + a[1]*v1 + a[2]*v2 + a[3]*v3
 		lambdaUpper = 3
 		m = 2
-		P0 = 0.1
 	elif (example == 4):
 		N = 8 # Order of matrix
 		# (tridiagonal: 4 on diagonal, -1 on off-diagonals)
@@ -615,13 +603,12 @@ if __name__ == "__main__":
 		
 		lambdaUpper = 6 # Upper bound for eigenvalues (max eigenvalue is ~4 for finite difference)
 		m = 3
-		P0 = 0.1
 
 
 	print('A:\n', A)
 	print('b:\n', b)
 	HHL = myHHL(A,b,lambdaUpper = lambdaUpper,
-				 m = m,P0 = P0, nShots = nShots)
+				 m = m, nShots = nShots)
 	
 	# Execute main code
 	if debug:
@@ -632,4 +619,3 @@ if __name__ == "__main__":
 		print('uExact: \t\t', HHL.uExact)
 		fidelity = np.dot(HHL.uHHL,HHL.uExact)
 		print('fidelity:', fidelity)
-		
