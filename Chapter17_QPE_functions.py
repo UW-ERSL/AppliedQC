@@ -373,8 +373,7 @@ def laplacian1D(N):
 def laplacianEigenExact(N):
 	"""Closed-form eigenvalues of laplacian1D(N): 4 sin^2((k+1)*pi/(2(N+1))),
 	k = 0..N-1, so entry 0 is the fundamental lambda^0.  Used ONLY to verify the
-	QPE estimate -- the point of QPE is the case where no closed form exists
-	(see variableStiffnessRod)."""
+	QPE estimate -- QPE is for the case where no closed form exists."""
 	k = np.arange(0, N)
 	return 4*np.sin((k+1)*np.pi/(2*(N+1)))**2
 
@@ -386,28 +385,6 @@ def laplacianEigenvector(N, k):
 	j = np.arange(1, N+1)
 	v = np.sin(j*(k+1)*np.pi/(N+1))
 	return v/np.linalg.norm(v)
-
-
-def variableStiffnessRod(N, aElem):
-	"""
-	Heterogeneous rod operator  -d/dx( a(x) du/dx ),  clamped ends, N interior nodes.
-	aElem holds the stiffness of the N+1 elements linking the nodes.
-
-	When a(x) is constant this is (a scaling of) laplacian1D.  When a(x) VARIES
-	-- e.g. a matrix/inclusion contrast a in {1, 10} -- the operator is still
-	symmetric tridiagonal, but its eigenvectors are no longer the sine modes and
-	its spectrum has NO closed form.  This is exactly the regime where QPE (or
-	HHL) is genuinely required: there is no analytic shortcut to verify against,
-	so for small N one checks against a classical eigensolver.
-	"""
-	aElem = np.asarray(aElem, dtype=float)
-	A = np.zeros((N, N))
-	for i in range(N):
-		aL, aR = aElem[i], aElem[i+1]
-		A[i, i] = aL + aR
-		if i > 0:    A[i, i-1] = -aL
-		if i < N-1:  A[i, i+1] = -aR
-	return A
 
 
 def estimateEigenvalueQPE(A, v, lambdaUpper, m, qpe=QiskitQPEWrapper, nShots=4000):
