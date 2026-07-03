@@ -43,8 +43,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from qiskit import QuantumCircuit, QuantumRegister, ClassicalRegister
 from qiskit.quantum_info import Statevector
-from qiskit.circuit.library import QFTGate
-from qiskit.circuit.library import QFT, phase_estimation, HamiltonianGate
+from qiskit.circuit.library import QFTGate, phase_estimation, HamiltonianGate
 from Chapter08_QuantumGates_functions import (simulate_statevector, simulate_measurements, runCircuitOnIBMQuantum, 
                                               findActualHardwareRequirements, plot_measurement_results)
 
@@ -219,7 +218,6 @@ def myQPEMultiBit(A,v,lambdaUpper,m,nShots=1000):
 	
 	# Step 6: Measure ancilla qubits
 	circuit.measure([*range(0,m)], [*range(0,m)])
-	circuit.draw('mpl')
 	
 	# Execute circuit and process results
 	counts = simulate_measurements(circuit,shots = nShots)
@@ -258,7 +256,6 @@ def QiskitQPEWrapper(A,v,lambdaUpper,m,nShots=1000):
 	"""
 	N = v.shape[0]
 	n = int(np.log2(N))
-	print(n,m)
 	
 	phase_qubits = QuantumRegister(m, 'θ')
 	input_qubits = QuantumRegister(n, 'v')
@@ -277,7 +274,13 @@ def QiskitQPEWrapper(A,v,lambdaUpper,m,nShots=1000):
 	QPE = phase_estimation(m,unitary=U_A)
 	circuit.append(QPE, [*range(n+m)])
 	
-	# Measure with reversed classical bit order (Qiskit convention)
+	# Measure the phase register.  The library's phase_estimation uses an
+	# inverse QFT whose qubit ordering is reversed relative to the hand-built
+	# myQPEMultiBit, so we write phase qubit i into classical bit (m-1-i).
+	# This reversal is what makes int(key,2)/2**m decode to the same theta as
+	# myQPEMultiBit (verified on phases whose bit-reverse is a different value,
+	# e.g. 0.375 vs 0.75).  Note U_A here is the EXACT HamiltonianGate, so this
+	# path performs no Trotterization; feed a PauliEvolutionGate to Trotterize.
 	circuit.measure( [*range(0, m)],[*range(m-1,-1,-1)])
 	counts = simulate_measurements(circuit,shots = nShots)
 	
@@ -291,3 +294,152 @@ def QiskitQPEWrapper(A,v,lambdaUpper,m,nShots=1000):
 		probabilities = np.append(probabilities,countsSorted[key]/nShots)
 		thetaEstimates = np.append(thetaEstimates,int(key, 2)/(2**m))
 	return [thetaEstimates,probabilities]
+
+
+# ============================================================================
+# Qiskit's batteries-included Hamiltonian phase estimation
+# ============================================================================
+def hamiltonianPhaseEstimationDemo(A, v, bound, m, evolution=None):
+	"""
+	QPE via qiskit-algorithms' HamiltonianPhaseEstimation (the highest-level route).
+	============================================================================
+	Contrast with myQPEMultiBit / QiskitQPEWrapper:
+	  - myQPEMultiBit    : we build the circuit AND the unitary U_A ourselves.
+	  - QiskitQPEWrapper : Qiskit builds the QPE circuit; we still hand it U_A.
+	  - this function    : we hand Qiskit the *Hermitian matrix A itself*; it
+	                       scales and exponentiates A into a unitary internally.
+
+	Because it exponentiates A for us, it also Trotterizes internally:
+	  - `bound`     is an upper bound on |eigenvalue(A)|  (the role of lambdaUpper);
+	                it scales A so the phases stay inside the QPE window.
+	  - `evolution` is the Trotter knob.  Pass LieTrotter(reps=r) or
+	                SuzukiTrotter(order=2, reps=r) from qiskit.synthesis.
+	                If evolution is None, the DEFAULT is a single first-order
+	                Trotter step -- the least accurate corner of the Trotter
+	                convergence study (see the Trotterization section).  For a
+	                non-commuting A this default visibly biases the estimate;
+	                raise the order or reps to remove it.
+
+	Parameters
+	----------
+	A : ndarray (2^n x 2^n) Hermitian
+	v : ndarray (2^n,)   eigenstate (or a guess with good overlap)
+	bound : float        upper bound on |eigenvalue(A)|
+	m : int              number of evaluation qubits (precision)
+	evolution : EvolutionSynthesis or None   Trotter formula (default: 1st order)
+
+	Returns
+	-------
+	HamiltonianPhaseEstimationResult
+	    Use .most_likely_eigenvalue for the dominant estimate, or
+	    .filter_phases(cutoff, as_float=True) to keep only phases whose
+	    probability exceeds `cutoff` (a built-in probability threshold).
+
+	Requires the separate `qiskit-algorithms` package (pinned in requirements).
+	"""
+	# Lazy imports so this module still loads if qiskit-algorithms is absent.
+	from qiskit.quantum_info import SparsePauliOp
+	from qiskit.primitives import StatevectorSampler
+	from qiskit_algorithms import HamiltonianPhaseEstimation
+
+	v = np.asarray(v, dtype=complex)
+	n = int(np.log2(v.shape[0]))
+	H = SparsePauliOp.from_operator(np.asarray(A, dtype=float))  # Pauli form of A
+
+	prep = QuantumCircuit(n)                                     # prepares |v>
+	prep.prepare_state(Statevector(v/np.linalg.norm(v)), list(range(n)))
+
+	hpe = HamiltonianPhaseEstimation(num_evaluation_qubits=m,
+	                                 sampler=StatevectorSampler())
+	return hpe.estimate(hamiltonian=H, state_preparation=prep,
+	                    evolution=evolution, bound=bound)
+
+
+# ============================================================================
+# Application: estimating an eigenvalue of an engineering operator with QPE
+# ============================================================================
+# The QFT chapter solved the CONSTANT-coefficient (circulant / tridiagonal)
+# operator analytically, because its spectrum is known in closed form.  QPE is
+# what you reach for when you want a specific eigenvalue -- typically the
+# fundamental mode (lowest frequency / slowest decay / critical load) -- of an
+# operator whose spectrum you do NOT know analytically.
+
+def laplacian1D(N):
+	"""1D Dirichlet Laplacian on N interior nodes: the tridiagonal (-1, 2, -1).
+	Take N = 2**n so the node vector is an n-qubit state."""
+	return 2*np.eye(N) - np.eye(N, k=1) - np.eye(N, k=-1)
+
+
+def laplacianEigenExact(N):
+	"""Closed-form eigenvalues of laplacian1D(N): 4 sin^2((k+1)*pi/(2(N+1))),
+	k = 0..N-1, so entry 0 is the fundamental lambda^0.  Used ONLY to verify the
+	QPE estimate -- the point of QPE is the case where no closed form exists
+	(see variableStiffnessRod)."""
+	k = np.arange(0, N)
+	return 4*np.sin((k+1)*np.pi/(2*(N+1)))**2
+
+
+def laplacianEigenvector(N, k):
+	"""Eigenvector for mode k (k = 0..N-1) of laplacian1D(N): sin(j*(k+1)*pi/(N+1)).
+	k = 0 is the fundamental mode (smallest eigenvalue), matching the 0-indexed
+	ordering lambda^0 <= lambda^1 <= ... used throughout the chapter."""
+	j = np.arange(1, N+1)
+	v = np.sin(j*(k+1)*np.pi/(N+1))
+	return v/np.linalg.norm(v)
+
+
+def variableStiffnessRod(N, aElem):
+	"""
+	Heterogeneous rod operator  -d/dx( a(x) du/dx ),  clamped ends, N interior nodes.
+	aElem holds the stiffness of the N+1 elements linking the nodes.
+
+	When a(x) is constant this is (a scaling of) laplacian1D.  When a(x) VARIES
+	-- e.g. a matrix/inclusion contrast a in {1, 10} -- the operator is still
+	symmetric tridiagonal, but its eigenvectors are no longer the sine modes and
+	its spectrum has NO closed form.  This is exactly the regime where QPE (or
+	HHL) is genuinely required: there is no analytic shortcut to verify against,
+	so for small N one checks against a classical eigensolver.
+	"""
+	aElem = np.asarray(aElem, dtype=float)
+	A = np.zeros((N, N))
+	for i in range(N):
+		aL, aR = aElem[i], aElem[i+1]
+		A[i, i] = aL + aR
+		if i > 0:    A[i, i-1] = -aL
+		if i < N-1:  A[i, i+1] = -aR
+	return A
+
+
+def estimateEigenvalueQPE(A, v, lambdaUpper, m, qpe=QiskitQPEWrapper, nShots=4000):
+	"""
+	Estimate the eigenvalue of Hermitian A associated with the PREPARED state v.
+	============================================================================
+	QPE returns the eigenphase(s) present in v, each weighted by |<u_k|v>|^2, so
+	WHICH eigenvalue you obtain is decided entirely by the state you prepare:
+	prepare the fundamental mode and you read the fundamental eigenvalue.
+
+	Obtaining that mode is the genuinely hard part, and it is deliberately NOT
+	done inside this routine.  For an operator with a known analytic mode (e.g.
+	the sine modes of laplacian1D) you pass it in directly; otherwise you supply
+	a physical guess with good overlap, or -- for verification on small problems
+	only -- an eigenvector from a classical solve.  Keeping that step at the call
+	site makes the classical eigen-computation visible instead of hiding it here.
+
+	The `qpe` backend selects how the phases are produced: QiskitQPEWrapper
+	(the library circuit, the default) or myQPEMultiBit (the from-scratch
+	build).  They are interchangeable -- same algorithm, same [theta, prob]
+	interface -- so the extraction below is independent of the choice.
+
+	Returns (lambdaPeak, lambdaWeighted): the dominant-bin and probability-
+	weighted estimates, both in eigenvalue units (theta * lambdaUpper).  The
+	weighted value is usually closer when the true phase is not an exact m-bit
+	fraction.  The smallest eigenvalue maps to the smallest phase (nearest 0) and
+	is the hardest to resolve -- the quantity an engineer most wants is the one
+	QPE resolves worst.
+	"""
+	v = np.asarray(v, dtype=complex)
+	v = v / np.linalg.norm(v)                # accept any trial vector, not just unit-norm
+	theta, P = qpe(A, v, lambdaUpper, m, nShots=nShots)
+	lambdaPeak     = float(theta[int(np.argmax(P))]) * lambdaUpper   # dominant bin
+	lambdaWeighted = float(np.sum(theta * P))        * lambdaUpper   # weighted mean
+	return lambdaPeak, lambdaWeighted
