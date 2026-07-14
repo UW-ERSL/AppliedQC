@@ -66,7 +66,39 @@ class QUBOBoxSolverClass:
 	def __init__(self,beta=0.5,LBox0 = 1,tol = 1e-6,
 			  samplingMethod = "simulatedAnnealing", 
 			  nSamples = 50,boxMaxIteration = 100):	
-		
+		"""
+		Initialize the adaptive box QUBO solver and select a sampler.
+
+		Configures the box-contraction parameters and instantiates the
+		annealing/exact sampler used to minimize the QUBO at each iteration.
+
+		Parameters
+		----------
+		beta : float, optional
+			Box contraction factor (0 < beta < 1); the box half-width is
+			multiplied by beta whenever no improvement is found. Default 0.5.
+		LBox0 : float, optional
+			Initial box half-width, spanning the expected solution
+			magnitude. Default 1.
+		tol : float, optional
+			Relative convergence tolerance; iteration stops when
+			L/LBox0 < tol. Default 1e-6.
+		samplingMethod : str, optional
+			Sampler backend: "exact", "simulatedAnnealing" (default),
+			"hybridQuantumAnnealing", or "quantumAnnealing".
+		nSamples : int, optional
+			Number of annealing reads per iteration for the annealing
+			samplers. Default 50.
+		boxMaxIteration : int, optional
+			Maximum number of box iterations before termination. Default 100.
+
+		Notes
+		-----
+		Sets ``self.nQubitsPerDimension = 2`` (two qubits per dimension give
+		the ternary encoding {-2L, 0, L}). Prints a message if
+		``samplingMethod`` is unrecognized.
+		"""
+
 		# Store optimization parameters
 		self.beta = beta
 		self.LBox0 = LBox0

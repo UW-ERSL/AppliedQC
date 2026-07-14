@@ -1,13 +1,9 @@
+"""
+Chapter 2 — Quantum Software: companion functions.
 
+Provides the classical oracle used in the Bernstein–Vazirani demonstration
+of Chapter 2. The oracle hides a fixed secret bit string ``s`` and returns
+the mod-2 inner product ``s · x``, the exact function the Bernstein–Vazirani
+quantum algorithm recovers in a single query.
+"""
 
-## Berstein-Vazirani function
-
-def secretBitStringFunction(x):
-    s = '11010'
-    if (len(x) != len(s)):
-        print('Error: Length of secret string is', len(s))
-        return 0
-    a = 0
-    for i in range(len(s)):
-        a = a + int(s[i])*x[i]
-    return a%2

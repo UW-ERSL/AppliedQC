@@ -70,6 +70,23 @@ def bitstring_to_expression(bitstring_expr: str):
     # Boolean expression case: replace only binary tokens (e.g. 101, 001)
     # while preserving operators/parentheses.
     def repl(match):
+        """
+        Convert a matched binary token to a parenthesized clause.
+
+        Regex-substitution callback: takes the whole matched bitstring token
+        and returns its per-variable conjunction wrapped in parentheses so it
+        can be embedded within a larger Boolean expression.
+
+        Parameters
+        ----------
+        match : re.Match
+            Match object whose group(0) is a binary token (e.g. '101').
+
+        Returns
+        -------
+        str
+            Parenthesized conjunction, e.g. '(x0 & ~x1 & x2)'.
+        """
         return f"({convert_single_bitstring(match.group(0))})"
 
     return re.sub(r"\b[01]+\b", repl, expr)
@@ -93,6 +110,18 @@ def get_qiskit_expression(expression, n, prefix_vars=None):
 
 
 def get_feasible_expression():
+    """
+    Return a hard-coded satisfiable Boolean expression over 7 variables.
+
+    Provides a fixed conjunctive-normal-form (CNF) SAT instance on variables
+    x0..x6 that has exactly one feasible solution, used as a worked example
+    for building a Grover PhaseOracle in this chapter.
+
+    Returns
+    -------
+    str
+        Boolean expression (AND of OR-clauses) in PhaseOracleGate syntax.
+    """
     one_feasible_soln  = (
         "(x0 | x1 | x2) & (x0 | x3 | x4)"
         " & (x1 | x3 | x5 | x6) & (x2 | x5) & (x4 | x6) & (~x1 | ~x4)"

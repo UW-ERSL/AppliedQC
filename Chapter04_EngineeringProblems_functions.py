@@ -1,3 +1,28 @@
+"""
+Targeted Engineering Problems — finite-element solvers and optimizers.
+
+This module collects the classical (non-quantum) engineering workhorses used
+throughout Chapter 4, "Targeted Engineering Problems". It provides small,
+self-contained finite-element and finite-difference solvers together with the
+optimization machinery that turns them into design problems:
+
+- ``TrussFEM`` — a 2D pin-jointed truss solver with member sizing / compliance
+  minimization (SLSQP) for ground-structure optimization.
+- ``Poisson1DFD`` / ``Poisson2DFD`` / ``Poisson2DFE`` — finite-difference and
+  finite-element discretizations of the Poisson equation −∇²u = f, illustrating
+  sparse assembly via Kronecker products and Dirichlet/periodic boundaries.
+- ``PlaneStressFEM`` with ``PlaneStressOC`` — a bilinear-quad plane-stress solver
+  and a SIMP density-based topology optimizer driven by the Optimality Criteria
+  method with sensitivity filtering.
+- ``MicrostructureGenerator`` and ``FEA2DHomogenize`` — periodic microstructure
+  generation and numerical homogenization of the effective elasticity tensor.
+- A family of ``truss*`` / ``PlaneStress*`` factory helpers that build the
+  benchmark problems (2×2 truss, 10-bar truss, cantilever, …) used in the text.
+
+These deterministic solvers supply the objective functions, stiffness operators,
+and strain-energy sensitivities that the chapter's quantum and variational
+algorithms (e.g. QAOA topology optimization) are benchmarked against.
+"""
 import numpy as np
 import matplotlib.pyplot as plt
 import time
@@ -8,6 +33,39 @@ from scipy.sparse import diags, kron, eye
 from scipy.sparse import lil_matrix
 
 class TrussFEM:
+    """
+    Finite-element solver and sizing optimizer for 2D pin-jointed trusses.
+
+    Each element is a two-node axial bar with constant Young's modulus ``E`` and
+    a per-element cross-sectional area. The class assembles the global stiffness
+    matrix K, solves K·u = f for the nodal displacements (robustly skipping
+    hanging nodes and detecting mechanisms), and provides post-processing
+    (stresses, compliance, volume) plus a compliance-minimizing area optimizer
+    subject to a volume-fraction constraint (used for ground-structure design).
+
+    Attributes
+    ----------
+    nodes : ndarray, shape (n_nodes, 2)
+        Node coordinates [x, y].
+    elements : list of tuple(int, int)
+        Element connectivity; each tuple gives the two node indices it joins.
+    loads : ndarray, shape (n_dof,)
+        Global nodal load vector (2 DOFs per node).
+    fixed_dofs : list of int
+        Indices of constrained (fixed) global DOFs.
+    E : float
+        Young's modulus (Pa).
+    A : ndarray, shape (n_elements,)
+        Per-element cross-sectional areas (m²).
+    L : ndarray, shape (n_elements,)
+        Precomputed element lengths.
+    Te : ndarray, shape (n_elements, 4, 4)
+        Precomputed element transformation/stiffness-shape matrices.
+    initialArea, initial_volume :
+        Reference areas and total volume Σ A·L used by the optimizer.
+    displacements : ndarray or None
+        Most recent solved displacement vector (None until ``solve`` is called).
+    """
     def __init__(self, nodes, elements,loads, fixed_dofs, E=200e9, A=0.0005):
         """
         Finite element model for 2D truss structures.
@@ -344,6 +402,25 @@ class TrussFEM:
        
         # 1. Define Objective Function (Compliance)
         def objective(xi):
+            """
+            Compliance objective and its gradient for the SLSQP optimizer.
+
+            Given relative areas ``xi`` (so that A = xi·A0), set the areas, solve
+            the FEM system, and return the compliance c = fᵀ·u together with its
+            analytic sensitivity dc/dξ_e = −A0_e·E·L_e·ε_e².
+
+            Parameters
+            ----------
+            xi : ndarray, shape (n_elements,)
+                Relative area multipliers applied to the reference areas ``A0``.
+
+            Returns
+            -------
+            compliance : float
+                Structural compliance fᵀ·u, or 1e20 if the design is unstable.
+            grad : ndarray, shape (n_elements,)
+                Gradient of the compliance with respect to each ξ_e.
+            """
             A = xi*A0
             self.set_area(A)
             u, valid = self.solve()
@@ -377,11 +454,40 @@ class TrussFEM:
 
         # 3. Define Constraints (Volume)
         def volume_constraint(xi):
+            """
+            Volume inequality constraint for SLSQP.
+
+            Returns a value that must stay ≥ 0, enforcing that the design volume
+            does not exceed ``volume_fraction`` times the initial volume.
+
+            Parameters
+            ----------
+            xi : ndarray, shape (n_elements,)
+                Relative area multipliers.
+
+            Returns
+            -------
+            float
+                ``volume_fraction − (Σ ξ_e·A0_e·L_e) / initial_volume``.
+            """
             # Must be >= 0 for SLSQP
             volume = np.sum(xi * A0 * self.L)
             return volume_fraction - volume/self.initial_volume
 
         def volume_gradient(xi):
+            """
+            Gradient of the volume constraint with respect to ``xi``.
+
+            Parameters
+            ----------
+            xi : ndarray, shape (n_elements,)
+                Relative area multipliers (unused; the gradient is constant).
+
+            Returns
+            -------
+            ndarray, shape (n_elements,)
+                Constant gradient −A0·L / initial_volume.
+            """
             return -A0 * self.L / self.initial_volume
 
         # Constraint dictionary
@@ -625,6 +731,33 @@ class TrussFEM:
 
 
 class Poisson1DFD:
+    """
+    Finite-difference solver for the 1D Poisson equation −u''(x) = f(x).
+
+    Discretizes the interval [0, L] into ``n_elements`` equal cells and applies
+    the standard tridiagonal (−1, 2, −1) stencil. Supports homogeneous Dirichlet
+    boundaries (end nodes eliminated) and periodic boundaries (a circulant ring
+    operator solved in the zero-mean gauge via a bordered Lagrange system).
+
+    Attributes
+    ----------
+    n_elements : int
+        Number of intervals.
+    length : float
+        Domain length L.
+    boundary : str
+        'dirichlet' or 'periodic'.
+    n_nodes : int
+        Number of grid nodes (n_elements+1 for Dirichlet, n_elements for periodic).
+    node_coords : ndarray, shape (n_nodes,)
+        Node coordinates.
+    h : float
+        Grid spacing L / n_elements.
+    fixed_dofs : list of int
+        Constrained node indices (empty for periodic).
+    f : ndarray, shape (n_nodes,)
+        Source term sampled at the nodes.
+    """
     def __init__(self, n_elements, f=1, length=1.0, boundary='dirichlet'):
         """
         1D Poisson equation finite-difference model.
@@ -740,6 +873,29 @@ class Poisson1DFD:
 
 
 class Poisson2DFD:
+    """
+    Finite-difference solver for the 2D Poisson equation −∇²u = f.
+
+    Uses a 5-point stencil on an interior grid of ``nx`` × ``ny`` points with
+    homogeneous Dirichlet boundaries. The stiffness operator is assembled
+    sparsely as a Kronecker sum, K = I_y ⊗ T_x + r·(T_y ⊗ I_x), where r accounts
+    for anisotropic spacing.
+
+    Attributes
+    ----------
+    nx, ny : int
+        Number of interior grid points in x and y.
+    Lx, Ly : float
+        Domain dimensions.
+    hx, hy : float
+        Grid spacing in x and y.
+    n_interior : int
+        Total interior unknowns nx·ny.
+    coords : ndarray, shape (n_interior, 2)
+        Interior node coordinates.
+    f : ndarray, shape (n_interior,)
+        Source term sampled at the interior nodes.
+    """
 
     def __init__(self, nx, ny, f=1.0, Lx=1.0, Ly=1.0):
         """
@@ -835,6 +991,33 @@ class Poisson2DFD:
         plt.show()
 
 class Poisson2DFE:
+    """
+    Finite-element solver for the 2D Poisson equation −∇²u = f.
+
+    Discretizes the domain with ``nx`` × ``ny`` bilinear elements and homogeneous
+    Dirichlet boundaries. The interior stiffness matrix is assembled from 1D
+    stiffness and mass matrices via Kronecker products,
+    K = M_y ⊗ K_x + K_y ⊗ M_x, and the boundary nodes are held at zero.
+
+    Attributes
+    ----------
+    nx, ny : int
+        Number of elements in x and y.
+    Lx, Ly : float
+        Domain dimensions.
+    hx, hy : float
+        Element sizes in x and y.
+    n_nodes_x, n_nodes_y, n_nodes : int
+        Node counts including boundaries.
+    n_interior_x, n_interior_y, n_interior : int
+        Interior node counts (unknowns).
+    coords : ndarray, shape (n_interior, 2)
+        Interior node coordinates.
+    interior_nodes : ndarray, shape (n_interior,)
+        Global indices of the interior nodes.
+    f : ndarray, shape (n_interior,)
+        Source term sampled at the interior nodes.
+    """
 
     def __init__(self, nx, ny, f=1.0, Lx=1.0, Ly=1.0):
         """
@@ -1293,6 +1476,19 @@ class PlaneStressFEM:
         return strain_energy
     
     def compute_elem_strain_energies(self):
+        """
+        Compute the (unpenalized) strain energy of every element.
+
+        For each element e, gathers its 8 nodal displacements u_e and evaluates
+        u_eᵀ·Ke·u_e using the base element stiffness (no SIMP density scaling).
+        These per-element energies drive the topology-optimization sensitivities
+        and the QAOA Hamiltonian in the chapter.
+
+        Returns
+        -------
+        ndarray, shape (n_elements,)
+            Strain energy of each element.
+        """
         se = np.zeros(self.n_elements)
         ke = self.Ke
         u = self.displacements
@@ -1435,6 +1631,28 @@ class PlaneStressOC:
     
     def __init__(self, fea, volume_fraction, filter_radius=1.5, 
                  move_limit=0.2, max_iter=100, tol=0.01):
+        """
+        Configure the Optimality Criteria topology optimizer.
+
+        Initializes the design to a uniform density equal to the target volume
+        fraction and precomputes the linear density/sensitivity filter weights.
+
+        Parameters
+        ----------
+        fea : PlaneStressFEM
+            Plane-stress finite-element model to optimize (supplies the mesh,
+            element stiffness, and solve routine).
+        volume_fraction : float
+            Target average element density (allowed material fraction in [0, 1]).
+        filter_radius : float, optional
+            Filter radius r_min (in element units) for the sensitivity filter.
+        move_limit : float, optional
+            Maximum change in any design variable per OC iteration.
+        max_iter : int, optional
+            Maximum number of OC iterations.
+        tol : float, optional
+            Convergence tolerance on the maximum design-variable change.
+        """
         self.fea = fea
         self.vf = volume_fraction
         self.rmin = filter_radius
@@ -1523,6 +1741,25 @@ class PlaneStressOC:
         return xi_new
 
     def optimize(self, verbose=True):
+        """
+        Run the density-based topology optimization loop.
+
+        Each iteration solves the FEM system, computes and filters the compliance
+        sensitivities dC/dξ, applies the Optimality Criteria update (with a
+        bisection on the Lagrange multiplier to satisfy the volume constraint),
+        and records the convergence history.
+
+        Parameters
+        ----------
+        verbose : bool, optional
+            If True, print progress every few iterations.
+
+        Returns
+        -------
+        dict
+            History with keys ``'iteration'``, ``'compliance'``,
+            ``'volume_fraction'``, and ``'change'`` (one list entry per iteration).
+        """
         if verbose:
             print(f"Starting OC Optimization: Target VF={self.vf}, Filter R={self.rmin}")
 
@@ -1562,6 +1799,24 @@ Examples of truss problems
 """
 
 def truss2x2(E=200e9, A=0.0005):
+    """
+    Build the 2×2 square truss benchmark (4 nodes, 6 bars).
+
+    A unit square with horizontals, verticals, and both diagonals. Nodes 0 and 2
+    (left edge) are fully fixed; a 100 kN downward load is applied at node 1.
+
+    Parameters
+    ----------
+    E : float, optional
+        Young's modulus (Pa).
+    A : float or array-like, optional
+        Cross-sectional area(s) (m²).
+
+    Returns
+    -------
+    TrussFEM
+        Configured truss model ready to solve or optimize.
+    """
     # Example usage with the 2x2 truss
     nodes = np.array([
         [0.0, 0.0],   # Node 0 (bottom left) - FIXED
@@ -1587,6 +1842,24 @@ def truss2x2(E=200e9, A=0.0005):
     return fem_model
 
 def truss2x3(E=200e9, A=0.0005):
+    """
+    Build the 2×3 truss benchmark (6 nodes, 11 bars).
+
+    A two-column, three-row grid with cross-bracing. Nodes 0, 2, 4 (left edge)
+    are fully fixed; a 10 kN downward load is applied at node 1.
+
+    Parameters
+    ----------
+    E : float, optional
+        Young's modulus (Pa).
+    A : float or array-like, optional
+        Cross-sectional area(s) (m²).
+
+    Returns
+    -------
+    TrussFEM
+        Configured truss model.
+    """
     # Example usage with the 2x3 truss
     nodes = np.array([
         [0.0, 0.0],   # Node 0 (bottom left) - FIXED
@@ -1617,6 +1890,25 @@ def truss2x3(E=200e9, A=0.0005):
 
 
 def truss3x2(E=200e9, A=0.0005):
+    """
+    Build the 3×2 truss benchmark (6 nodes, 11 bars).
+
+    A three-column, two-row bay with horizontals, verticals, and diagonals.
+    Nodes 0 and 2 (bottom corners) are fully fixed; a 10 kN downward load is
+    applied at node 4 (top center).
+
+    Parameters
+    ----------
+    E : float, optional
+        Young's modulus (Pa).
+    A : float or array-like, optional
+        Cross-sectional area(s) (m²).
+
+    Returns
+    -------
+    TrussFEM
+        Configured truss model.
+    """
     # Example usage with the 3x2 truss
     # Nodes: 6
     # Elements: 11
@@ -1646,6 +1938,25 @@ def truss3x2(E=200e9, A=0.0005):
     return fem_model
 
 def truss3x3(E=200e9, A=0.0005):
+    """
+    Build the 3×3 truss ground structure (9 nodes, 28 bars).
+
+    A full 3×3 grid ground structure: all node pairs except the 8 that pass
+    through an intermediate collinear node. Nodes 0 and 2 (bottom corners) are
+    fully fixed; a 10 kN downward load is applied at node 7 (top center).
+
+    Parameters
+    ----------
+    E : float, optional
+        Young's modulus (Pa).
+    A : float or array-like, optional
+        Cross-sectional area(s) (m²).
+
+    Returns
+    -------
+    TrussFEM
+        Configured truss model.
+    """
     # Example usage with the 3x3 truss
     # Nodes: 9
     # Elements: 28 (full ground structure: all 36 node pairs minus the 8
@@ -1711,6 +2022,21 @@ def truss_grid(M = 8, N = 4, Lx=1.0, E=200e9, A=0.0005):
 
         # Helper to get node index from (ix, iy)
         def node_id(ix, iy):
+            """
+            Map grid coordinates (ix, iy) to a flat node index.
+
+            Parameters
+            ----------
+            ix : int
+                Column index (0 … M−1).
+            iy : int
+                Row index (0 … N−1).
+
+            Returns
+            -------
+            int
+                Flattened node index ``iy·M + ix``.
+            """
             return iy * M + ix
 
         elements = []
@@ -1749,7 +2075,25 @@ def truss_grid(M = 8, N = 4, Lx=1.0, E=200e9, A=0.0005):
         return fem_model
 
 def truss3x3Substructure(E=200e9, A=0.0005):
-    
+    """
+    Build the 3×3 truss and activate a hand-picked 10-member substructure.
+
+    Starts from :func:`truss3x3` and zeroes the area of all bars not in a chosen
+    binary mask, leaving 10 active load-carrying members (a manually designed
+    load path). Inactive members keep zero area.
+
+    Parameters
+    ----------
+    E : float, optional
+        Young's modulus (Pa).
+    A : float or array-like, optional
+        Cross-sectional area(s) (m²) for the active members.
+
+    Returns
+    -------
+    TrussFEM
+        Truss model whose active members form the selected substructure.
+    """
     fem_model = truss3x3(E=E, A=A)
     #  Plot with a specific design
     sub_structure = np.array([
@@ -1880,13 +2224,64 @@ def PlaneStressCantilever(nx=60, ny=20, E= 200e9, nu=0.3):
 
 
 class MicrostructureGenerator:
+    """
+    Generate 2D periodic microstructure bitmaps for homogenization studies.
+
+    Produces an ``nx`` × ``ny`` binary grid (matrix = 1, inclusion/void = 0) for
+    a range of patterns — disks, squares, multiple/random disks, random elements,
+    and 2D analogues of triply-periodic minimal surfaces (primitive, gyroid,
+    Schwarz). Inclusion sizes are chosen (analytically or by bisection) to hit a
+    target inclusion fraction. The result feeds :class:`FEA2DHomogenize`.
+
+    Attributes
+    ----------
+    nx, ny : int
+        Grid dimensions.
+    inclusion_fraction : float
+        Target area fraction occupied by inclusions/voids.
+    data : ndarray, shape (nx, ny)
+        Generated microstructure (1.0 = matrix, 0.0 = inclusion).
+    """
     def __init__(self, nx, ny, inclusion_fraction=0.3, micro_type='disk'):
+        """
+        Create and populate a microstructure of the requested type.
+
+        Parameters
+        ----------
+        nx, ny : int
+            Grid dimensions.
+        inclusion_fraction : float, optional
+            Target inclusion area fraction.
+        micro_type : str, optional
+            Pattern to generate; passed through to :meth:`generate` (e.g.
+            'disk', 'square', '4disks', 'random_disks', 'random_elements',
+            'primitive_tpms', 'gyroid_tpms', 'schwarz_tpms').
+        """
         self.nx = nx
         self.ny = ny
         self.inclusion_fraction = inclusion_fraction
         self.generate(type=micro_type)
-        
+
     def generate(self, type='disk'):
+        """
+        Build the microstructure bitmap for the given pattern type.
+
+        Fills ``self.data`` with an ``nx`` × ``ny`` array (1.0 = matrix,
+        0.0 = inclusion) sized to approximate ``self.inclusion_fraction``, and
+        prints the target vs. achieved fraction. TPMS variants use bisection to
+        tune the level-set threshold t.
+
+        Parameters
+        ----------
+        type : str, optional
+            One of 'disk', 'square', '4disks', 'random_disks',
+            'random_elements', 'primitive_tpms', 'gyroid_tpms', 'schwarz_tpms'.
+
+        Raises
+        ------
+        ValueError
+            If ``type`` is not a recognized microstructure pattern.
+        """
         nx, ny = self.nx, self.ny
      
         # Create microstructure
@@ -2006,6 +2401,12 @@ class MicrostructureGenerator:
   
 
     def plot(self):
+        """
+        Display the generated microstructure as a grayscale grid image.
+
+        Renders ``self.data`` with ``imshow`` (origin at lower-left) and overlays
+        the element grid lines. No return value; produces a matplotlib figure.
+        """
         nx, ny = self.nx, self.ny
         _, ax = plt.subplots()
         ax.imshow(self.data, cmap='Greys', origin='lower', vmin=0, vmax=1.4)
@@ -2019,6 +2420,15 @@ class MicrostructureGenerator:
         plt.show()
 
 class FEA2DHomogenize:
+    """
+    Numerical homogenization of a 2D two-phase periodic microstructure.
+
+    A namespace of static methods implementing plane-strain homogenization
+    (after Andreassen & Andreasen, *Comput. Mater. Sci.* 83, 2014): assemble the
+    periodic stiffness system, solve the three unit-strain load cases, and
+    average the element energies to obtain the effective (homogenized) elasticity
+    tensor Cᴴ, plus a helper to extract E and ν from that tensor.
+    """
     @staticmethod
     def fea_homogenize(E_incl, nu_incl, E_matrix, nu_matrix, microData):
         """
@@ -2253,6 +2663,22 @@ class FEA2DHomogenize:
 
     @staticmethod
     def get_E_nu_from_C(C_voigt):
+        """
+        Compute isotropic Young's modulus and Poisson's ratio from Cᴴ.
+
+        Inverts the isotropic plane relations, taking ν = C₀₁ / (C₀₀ + C₀₁) and
+        E = 2·C₂₂·(1 + ν) from the Voigt-form elasticity tensor.
+
+        Parameters
+        ----------
+        C_voigt : ndarray, shape (3, 3)
+            Homogenized elasticity tensor in Voigt notation.
+
+        Notes
+        -----
+        The method computes ``E`` and ``nu`` internally but has no explicit
+        ``return`` statement, so it evaluates to ``None``.
+        """
         nu = C_voigt[0,1] / (C_voigt[0,0] + C_voigt[0,1])
         E = 2 * C_voigt[2,2] * (1 + nu)
         return E, nu

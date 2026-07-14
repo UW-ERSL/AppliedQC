@@ -74,6 +74,29 @@ def simulate_measurements(circuit, shots, transpiled = False, noise_model=None):
     return job.result().get_counts()
 
 def UniversalOperator(theta,phi,lambdaAngle):
+	"""
+	Build the 2x2 universal single-qubit unitary U(θ, φ, λ).
+
+	Returns the general single-qubit rotation (Qiskit's U/U3 gate) that,
+	together with entangling gates, forms a universal gate set:
+
+	    U = [[cos(θ/2),               -e^{iλ} sin(θ/2)],
+	         [e^{iφ} sin(θ/2),  e^{i(φ+λ)} cos(θ/2)]]
+
+	Parameters
+	----------
+	theta : float
+		Polar rotation angle θ (radians).
+	phi : float
+		Phase angle φ (radians).
+	lambdaAngle : float
+		Phase angle λ (radians).
+
+	Returns
+	-------
+	numpy.ndarray
+		Complex (2, 2) unitary matrix representing U(θ, φ, λ).
+	"""
 	U = np.array([[np.cos(theta/2),-np.exp(1j*lambdaAngle)*np.sin(theta/2)],
 			      [np.exp(1j*phi)*np.sin(theta/2), np.exp(1j*(phi+lambdaAngle))*np.cos(theta/2)]])
 	return U
