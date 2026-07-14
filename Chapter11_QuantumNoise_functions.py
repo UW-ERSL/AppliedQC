@@ -1,3 +1,16 @@
+"""
+Quantum Noise and LCU Measurement Post-Processing
+=================================================
+Post-processing helpers for circuits that implement matrix-vector products
+via a Linear Combination of Unitaries (LCU) with an ancilla-based block
+encoding, as used in this chapter's quantum-noise experiments.
+
+Because measurement yields only outcome probabilities, these routines recover
+state-vector magnitudes (never signs or phases): they post-select on the
+all-zero ancilla pattern, renormalize by the block-encoding factor alpha and
+the post-selection success probability, and report the resulting amplitudes
+and post-selection success rate.
+"""
 
 import numpy as np  
 import matplotlib.pyplot as plt

@@ -19,13 +19,60 @@ from Chapter08_QuantumGates_functions import simulate_measurements #type: ignore
 
 
 def ryMatrix(alpha):
+	"""
+	Return the 2x2 rotation matrix R_y(α) about the Bloch-sphere y-axis.
+
+	R_y(α) = [[cos(α/2), -sin(α/2)], [sin(α/2), cos(α/2)]].
+
+	Parameters
+	----------
+	alpha : float
+		Rotation angle α (radians).
+
+	Returns
+	-------
+	numpy.ndarray
+		Real (2, 2) unitary rotation matrix.
+	"""
 	return np.array([[np.cos(alpha/2), -np.sin(alpha/2)], [np.sin(alpha/2), np.cos(alpha/2)]])
 
 def rzMatrix(omega):
+	"""
+	Return the 2x2 rotation matrix R_z(ω) about the Bloch-sphere z-axis.
+
+	R_z(ω) = diag(e^{-iω/2}, e^{+iω/2}), a diagonal phase rotation.
+
+	Parameters
+	----------
+	omega : float
+		Rotation angle ω (radians).
+
+	Returns
+	-------
+	numpy.ndarray
+		Complex (2, 2) diagonal unitary rotation matrix.
+	"""
 	return np.array([[np.exp(-1j*omega/2), 0], [0, np.exp(1j*omega/2)]])
 
 # State preparation circuits (Hadamard = uniform superposition)
 def hadamards(n_qubits):
+    """
+    Build a circuit that applies a Hadamard to every qubit.
+
+    Places one H gate on each of the ``n_qubits`` wires, mapping |0...0⟩ to
+    the uniform superposition over all 2**n_qubits basis states. Used as a
+    state-preparation routine for the Hadamard-test circuits.
+
+    Parameters
+    ----------
+    n_qubits : int
+        Number of qubits in the circuit.
+
+    Returns
+    -------
+    qiskit.QuantumCircuit
+        Circuit of width ``n_qubits`` with a Hadamard on each qubit.
+    """
     qc = QuantumCircuit(n_qubits)
     for i in range(n_qubits):
         qc.h(i)

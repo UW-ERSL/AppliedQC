@@ -1,5 +1,12 @@
 
-## This is a just a  reference file to keep track of Qiskit imports for cut-and-paste purposes. 
+"""
+Qiskit imports reference.
+
+A convenience collection of the Qiskit, Qiskit-Aer, and Qiskit-IBM-Runtime
+import statements used throughout the AppliedQC companion code, kept for
+cut-and-paste reuse. This file is not meant to be run as a script.
+"""
+## This is a just a  reference file to keep track of Qiskit imports for cut-and-paste purposes.
 # It is not meant to be run as a script.
 
 

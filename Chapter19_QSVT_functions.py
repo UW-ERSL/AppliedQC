@@ -1,3 +1,21 @@
+"""
+Chapter 19 — Quantum Singular Value Transformation (QSVT)
+========================================================
+
+Companion code for Chapter 19. Implements a QSVT-based linear-system solver
+that applies an odd polynomial approximation of 1/x to the singular values of a
+block-encoded matrix A, producing a state proportional to A⁻¹|b⟩.
+
+Provides
+--------
+* SignalOperator / ShiftOperator : the Wₓ signal and phase-shift 2×2 unitaries
+  underlying quantum signal processing.
+* SunderhaufPolynomial : optimal odd Chebyshev approximation of 1/x on [a, 1],
+  with degree/error bounds (Sünderhauf et al., Quantum 8, 1226 (2024)).
+* myQSVT : builds the block encoding, computes QSP phase angles, assembles the
+  Qiskit QSVT circuit, and post-selects the solution direction.
+* run_comprehensive_tests : end-to-end fidelity test suite over several matrices.
+"""
 import numpy as np
 import scipy
 import math
@@ -12,10 +30,43 @@ from qiskit.quantum_info import Statevector, Operator
 
 
 def SignalOperator(x):
-    U = np.array([[x, 1j*np.sqrt(1-x*x)], [1j*np.sqrt(1-x*x), x]])   
+    """
+    Return the Wₓ signal-processing operator for signal value x.
+
+    Constructs the 2×2 unitary W(x) = [[x, i√(1−x²)], [i√(1−x²), x]], the
+    'Wx' convention used by pyqsp, where x plays the role of a singular value
+    in [−1, 1].
+
+    Parameters
+    ----------
+    x : float
+        Signal value (singular value) in [−1, 1].
+
+    Returns
+    -------
+    numpy.ndarray
+        The (2, 2) complex unitary W(x).
+    """
+    U = np.array([[x, 1j*np.sqrt(1-x*x)], [1j*np.sqrt(1-x*x), x]])
     return U
 
 def ShiftOperator(phi):
+    """
+    Return the QSP phase-shift operator for angle phi.
+
+    Constructs the diagonal 2×2 unitary P(φ) = diag(e^{iφ}, e^{−iφ}) inserted
+    between signal operators in a quantum-signal-processing sequence.
+
+    Parameters
+    ----------
+    phi : float
+        Phase angle in radians.
+
+    Returns
+    -------
+    numpy.ndarray
+        The (2, 2) complex diagonal unitary P(φ).
+    """
     return np.array([[np.exp(1j*phi), 0],
                      [0, np.exp(-1j*phi)]])
 
@@ -42,6 +93,27 @@ class SunderhaufPolynomial:
 
     @staticmethod
     def helper_P(x: float, n: int, a: float) -> float:
+        """
+        Evaluate the target function approximating 1/x at x.
+
+        Implements Sünderhauf's closed-form P(x) built from the auxiliary Lₙ
+        recurrence (:func:`helper_Lfrac`); Chebyshev-interpolating this sampled
+        function yields the optimal odd polynomial approximation of 1/x on [a, 1].
+
+        Parameters
+        ----------
+        x : float
+            Evaluation point in [a, 1] (or its negative image).
+        n : int
+            Recurrence order, equal to (d + 1) // 2 for target degree d.
+        a : float
+            Lower edge of the domain, a = 1/κ.
+
+        Returns
+        -------
+        float
+            Value of the target function at x.
+        """
         return (
             1
             - (-1)**n * (1 + a)**2 / (4 * a)
@@ -51,6 +123,29 @@ class SunderhaufPolynomial:
 
     @staticmethod
     def poly(d: int, a: float) -> Chebyshev:
+        """
+        Build the degree-d optimal odd Chebyshev approximation of 1/x on [a, 1].
+
+        Chebyshev-interpolates the target function :func:`helper_P` at d+1 nodes,
+        then zeroes the even-index coefficients to enforce exact odd parity.
+
+        Parameters
+        ----------
+        d : int
+            Polynomial degree; must be odd.
+        a : float
+            Lower edge of the approximation domain, a = 1/κ.
+
+        Returns
+        -------
+        numpy.polynomial.chebyshev.Chebyshev
+            The odd Chebyshev polynomial approximating 1/x on [a, 1].
+
+        Raises
+        ------
+        ValueError
+            If d is even.
+        """
         if d % 2 == 0:
             raise ValueError("d must be odd")
         coef = np.polynomial.chebyshev.chebinterpolate(
@@ -60,11 +155,48 @@ class SunderhaufPolynomial:
 
     @staticmethod
     def error_for_degree(d: int, a: float) -> float:
+        """
+        Return the worst-case (L∞) approximation error for degree d.
+
+        Evaluates Sünderhauf's error bound (1−a)ⁿ / (a·(1+a)ⁿ⁻¹) with
+        n = (d + 1) // 2, the maximum deviation of the degree-d polynomial from
+        1/x on [a, 1].
+
+        Parameters
+        ----------
+        d : int
+            Polynomial degree (odd).
+        a : float
+            Lower edge of the domain, a = 1/κ.
+
+        Returns
+        -------
+        float
+            Guaranteed L∞ error bound of the approximation.
+        """
         n = (d + 1) // 2
         return (1 - a)**n / (a * (1 + a)**(n - 1))
 
     @staticmethod
     def mindegree(epsilon: float, a: float) -> int:
+        """
+        Return the minimal odd degree achieving target error epsilon.
+
+        Inverts the error bound to find the smallest degree d = 2n − 1 whose
+        L∞ approximation error on [a, 1] does not exceed ε.
+
+        Parameters
+        ----------
+        epsilon : float
+            Target L∞ approximation error.
+        a : float
+            Lower edge of the domain, a = 1/κ.
+
+        Returns
+        -------
+        int
+            Smallest odd polynomial degree meeting the error target.
+        """
         n = math.ceil(
             (np.log(1 / epsilon) + np.log(1 / a) + np.log(1 + a))
             / np.log((1 + a) / (1 - a))
@@ -76,6 +208,32 @@ class SunderhaufPolynomial:
 # QSVT linear solver
 # ==============================================================================
 class myQSVT:
+    """
+    QSVT-based quantum linear-system solver.
+
+    Solves A x = b (up to normalisation) by applying an odd polynomial
+    p(x) ≈ 1/x to the singular values of a block-encoded A via Quantum Singular
+    Value Transformation, then post-selecting the ancilla to obtain a state
+    proportional to A⁻¹|b⟩.
+
+    Attributes
+    ----------
+    A : numpy.ndarray
+        The (N, N) system matrix; all singular values must lie in (0, 1).
+    b : numpy.ndarray
+        Normalised (N,) right-hand side.
+    n : int
+        Number of data qubits, log₂(N).
+    kappa : float
+        Condition number used to size the 1/x approximation.
+    angles : list of float
+        QSP phase angles driving the QSVT sequence.
+    tau : float
+        Scaling factor recovering the unnormalised A⁻¹b from the block encoding.
+    achieved_error : float
+        L∞ error bound of the polynomial approximation actually used.
+    """
+
     def __init__(self, A, b, kappa=None, nShots=1000, target_error=None):
         """
         Parameters
@@ -118,6 +276,28 @@ class myQSVT:
     # Phase computation
     # ------------------------------------------------------------------
     def _get_inverse_phases_sunderhauf(self, kappa, target_error=None):
+        """
+        Compute QSP phase angles for the 1/x transformation at condition number kappa.
+
+        Builds the optimal odd Chebyshev approximation of 1/x on [1/κ, 1],
+        rescales it to lie safely within the unit interval required by QSP, and
+        calls pyqsp to obtain the phase angles under the 'Wx' convention.
+
+        Parameters
+        ----------
+        kappa : float
+            Condition number; sets the domain edge a = 1/κ.
+        target_error : float, optional
+            Target L∞ error. If given, the minimal degree meeting it is used;
+            otherwise the current self.degree (forced odd) is used.
+
+        Returns
+        -------
+        tuple of (list of float, float, float)
+            The phase angles, the scaling factor τ that undoes the polynomial
+            normalisation (recovering unnormalised A⁻¹b), and the achieved L∞
+            error bound.
+        """
         a = 1.0 / kappa
 
         if target_error is not None:
@@ -235,6 +415,17 @@ class myQSVT:
     # Input validation
     # ------------------------------------------------------------------
     def _validate_input(self):
+        """
+        Check that every singular value of A is strictly below 1.
+
+        The block-encoding construction requires ‖A‖ < 1; a singular value ≥ 1
+        makes it invalid.
+
+        Returns
+        -------
+        bool
+            True if all singular values are < 1, False otherwise.
+        """
         s = np.linalg.svd(self.A, compute_uv=False)
         if np.any(s >= 1.0):
             print("Warning: all singular values must be strictly < 1.")

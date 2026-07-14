@@ -42,6 +42,29 @@ Notation matches the LaTeX formulation:
 """
 
 def print_QUBO_best_result(results,method_name = " "):
+    """
+    Print and return the lowest-energy sample from a QUBO/annealing run.
+
+    Reports the binary variable assignment and the corresponding Hamiltonian
+    (Ising) energy of the best sample found by a dimod/neal sampleset.
+
+    Parameters
+    ----------
+    results : dimod.SampleSet
+        Sampleset returned by a QUBO solver. Its ``variables`` list and
+        ``first`` (lowest-energy) record are inspected.
+    method_name : str, optional
+        Label prefixed to the printed output to identify the solver used
+        (default is a single space).
+
+    Returns
+    -------
+    q : list of int
+        Binary variable values (0/1) of the lowest-energy sample, ordered
+        as in ``results.variables``.
+    HMin : float
+        Energy of the lowest-energy sample.
+    """
     variables = list(results.variables)
     q = [int(results.first.sample[v]) for v in variables]
     HMin = results.first.energy
