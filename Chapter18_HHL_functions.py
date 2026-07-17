@@ -222,8 +222,10 @@ class myHHL:
 		Note: Assumes A is symmetric, so eigenvalues are real
 		"""
 		self.eig_val, self.eig_vec = scipy.linalg.eig(self.A)
-		# Remove imaginary component (should be ~0 for symmetric A)
-		self.eig_val = np.abs(self.eig_val)
+		# Keep the real part (imaginary component is ~0 for symmetric A).
+		# Note: use np.real, not np.abs -- abs would silently flip the sign of
+		# any negative eigenvalue.
+		self.eig_val = np.real(self.eig_val)
 
 	def estimate_lambda_bounds_gershgorin(self):
 		"""
@@ -516,10 +518,9 @@ class myHHL:
 			self.lambdaLower = lambda_lower_gershgorin * 0.99
 			print("Warning: No eigenvalues detected by QPE, using Gershgorin only")
 			
-		print(f"λ_lower (Gershgorin): {lambda_lower_gershgorin:.6f}")
-		if len(self.thetaTilde) > 0:
-			print(f"λ_lower (QPE): {lambda_lower_qpe:.6f}")
-		print(f"λ_lower (used): {self.lambdaLower:.6f}")
+		#print(f"λ_lower (Gershgorin): {lambda_lower_gershgorin:.6f}")
+		#if len(self.thetaTilde) > 0: print(f"λ_lower (QPE): {lambda_lower_qpe:.6f}")
+		#print(f"λ_lower (used): {self.lambdaLower:.6f}")
 
 		# Step 3: Construct and run full HHL circuit
 		self.constructHHLCircuit()
@@ -549,8 +550,8 @@ class myHHL:
 		tMax = 2*np.pi/max(self.eig_val)
 		print("Exact eigenphases of A:\n", eigenPhase)
 		if (max(eigenPhase) >= 1):
-			print('Invalid value for lambdaUpper and/or fs', self.lambdaUpper,self.f)
-			print('Here choose t to be <', abs(tMax))
+			print('Invalid value for lambdaUpper:', self.lambdaUpper)
+			print('lambdaUpper must exceed the largest eigenvalue; choose t to be <', abs(tMax))
 		
 		self.solveuExact()
 		print('xExact:', self.xExact)
@@ -588,20 +589,16 @@ if __name__ == "__main__":
 		lambdaUpper = 3
 		m = 2
 	elif (example == 4):
-		N = 8 # Order of matrix
-		# (tridiagonal: 4 on diagonal, -1 on off-diagonals)
-		A = np.zeros((N, N))
-		for i in range(N):
-			A[i, i] = 4
-			if i > 0:
-				A[i, i-1] = -1
-			if i < N-1:
-				A[i, i+1] = -1
-		
-		# Create a simple normalized vector b
-		b = np.ones(N) / np.sqrt(N)
-		
-		lambdaUpper = 6 # Upper bound for eigenvalues (max eigenvalue is ~4 for finite difference)
+		# 1D Poisson matrix (tridiagonal: 2 on diagonal, -1 on off-diagonals)
+		N = 4  # dimension of the Poisson matrix
+		A = 2 * np.eye(N) - np.eye(N, k=1) - np.eye(N, k=-1)
+		# Dirichlet boundary conditions: b = [1, 0, ..., 0]
+		b = np.zeros(N)
+		b[0] = 1
+		D = np.linalg.eigvalsh(A)
+		# lambdaUpper must exceed the largest eigenvalue so all eigenphases < 1;
+		# a small margin avoids the largest phase wrapping at exactly 1.
+		lambdaUpper = 1.1 * np.max(D)
 		m = 3
 
 
@@ -617,5 +614,7 @@ if __name__ == "__main__":
 		print("uHHL: \t\t\t", HHL.uHHL)
 		HHL.solveuExact()
 		print('uExact: \t\t', HHL.uExact)
-		fidelity = np.dot(HHL.uHHL,HHL.uExact)
+		# State fidelity |<uHHL|uExact>|^2 (Book Eq. 18.23). The abs handles the
+		# global-sign ambiguity: |u> and -|u> are physically identical.
+		fidelity = np.abs(np.dot(HHL.uHHL,HHL.uExact))**2
 		print('fidelity:', fidelity)
