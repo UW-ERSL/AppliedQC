@@ -439,3 +439,28 @@ def build_observable_circuit(A, x, f):
         'good_qubits': list(range(num_system)),
     }
     return qc, metadata
+
+def square_hole_U_psi(m):
+    """2^m x 2^m grid with a centered square hole of side N/2 (area fraction 1/4).
+    Requires m >= 2.  Good state = flag |1> on the hole.
+
+    Key fact: a centered hole spans x in [N/4, 3N/4), and inspecting the top two
+    bits of x shows that range is exactly  x_{m-1} XOR x_{m-2} = 1  (top two bits
+    differ; lower bits irrelevant).  So the oracle touches only the top two bits
+    of each coordinate -- the same tiny circuit for every m:
+        inside = (x_{m-1} ^ x_{m-2}) AND (y_{m-1} ^ y_{m-2})."""
+    if m < 2:
+        raise ValueError("need m >= 2 for a centered 25% hole")
+    flag = QuantumRegister(1, "flag")
+    x    = QuantumRegister(m, "x")
+    y    = QuantumRegister(m, "y")
+    anc  = QuantumRegister(2, "anc")
+    U_psi = QuantumCircuit(flag, x, y, anc)
+
+    U_psi.h(x); U_psi.h(y)                           # uniform over all 2^(2m) cells
+    U_psi.cx(x[m-1], anc[0]); U_psi.cx(x[m-2], anc[0]) # anc0 = x_{m-1} ^ x_{m-2}
+    U_psi.cx(y[m-1], anc[1]); U_psi.cx(y[m-2], anc[1]) # anc1 = y_{m-1} ^ y_{m-2}
+    U_psi.ccx(anc[0], anc[1], flag[0])               # flag = inside hole
+    U_psi.cx(y[m-2], anc[1]); U_psi.cx(y[m-1], anc[1])       # uncompute ancillas
+    U_psi.cx(x[m-2], anc[0]); U_psi.cx(x[m-1], anc[0])
+    return U_psi, [0]                                    # objective_qubits = [flag]

@@ -2674,10 +2674,10 @@ class FEA2DHomogenize:
         C_voigt : ndarray, shape (3, 3)
             Homogenized elasticity tensor in Voigt notation.
 
-        Notes
-        -----
-        The method computes ``E`` and ``nu`` internally but has no explicit
-        ``return`` statement, so it evaluates to ``None``.
+        Returns
+        -------
+        tuple of float
+            ``(E, nu)`` -- the isotropic Young's modulus and Poisson's ratio.
         """
         nu = C_voigt[0,1] / (C_voigt[0,0] + C_voigt[0,1])
         E = 2 * C_voigt[2,2] * (1 + nu)
