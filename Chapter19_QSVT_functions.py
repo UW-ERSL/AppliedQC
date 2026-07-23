@@ -11,7 +11,8 @@ Provides
 * SignalOperator / ShiftOperator : the Wₓ signal and phase-shift 2×2 unitaries
   underlying quantum signal processing.
 * SunderhaufPolynomial : optimal odd Chebyshev approximation of 1/x on [a, 1],
-  with degree/error bounds (Sünderhauf et al., Quantum 8, 1226 (2024)).
+  with degree/error bounds (Sünderhauf et al., "Matrix inversion polynomials
+  for the quantum singular value transformation", arXiv:2507.15537 (2025)).
 * myQSVT : builds the block encoding, computes QSP phase angles, assembles the
   Qiskit QSVT circuit, and post-selects the solution direction.
 * run_comprehensive_tests : end-to-end fidelity test suite over several matrices.
@@ -19,7 +20,6 @@ Provides
 import numpy as np
 import scipy
 import math
-import matplotlib.pyplot as plt
 from numpy.polynomial import Chebyshev
 from pyqsp.angle_sequence import QuantumSignalProcessingPhases 
 
@@ -73,8 +73,8 @@ def ShiftOperator(phi):
 
 # ==============================================================================
 # Sunderhauf optimal 1/x polynomial
-# Ref: Sunderhauf et al., "Block-encoding structured matrices for data input
-#      in quantum computing", Quantum 8, 1226 (2024).
+# Ref: Sunderhauf et al., "Matrix inversion polynomials for the quantum
+#      singular value transformation", arXiv:2507.15537 (2025).
 # ==============================================================================
 class SunderhaufPolynomial:
     """Optimal odd Chebyshev polynomial approximating 1/x on [a, 1]."""

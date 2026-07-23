@@ -446,10 +446,10 @@ class QATrussOptimizer:
         print(f"Total iterations: {iteration + 1}")
         print(f"Total time: {total_time:.2f}s ({total_time/(iteration+1):.3f}s per iteration)")
         print(f"\nFinal Design:")
-        print(f"  Compliance: {final_metrics['compliance']:.4e} J")
-        print(f"  Volume: {final_metrics['volume']:.4f} m³ (target: {self.V_bar:.4f})")
+        print(f"  Compliance: {final_metrics['compliance']:.4g} J")
+        print(f"  Volume: {final_metrics['volume']:.4f} (target: {self.V_bar:.4f})")
         print(f"  Active members: {np.sum(self.A > 100*self.A_min)}/{self.n_elements}")
-        print(f"  Area range: [{self.A.min():.4e}, {self.A.max():.4e}] m²")
+        print(f"  Area range: [{self.A.min():.4g}, {self.A.max():.4g}]")
         print(f"{'='*70}")
         
         # Package results
