@@ -35,7 +35,7 @@ from qiskit.circuit.library import  MCXGate, PhaseOracle
 from qiskit import QuantumCircuit
 from qiskit.circuit.library import PhaseOracleGate
 
-from Chapter08_QuantumGates_functions import simulate_statevector,  simulate_measurements
+from Chapter08_QuantumGates_functions import  simulate_measurements
 import math
 
 def bitstring_to_expression(bitstring_expr: str):
