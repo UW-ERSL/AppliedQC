@@ -8,3 +8,8 @@
 /research
 /solutions
 QCTextSolution.ipynb
+
+/solutions/
+*Token*.txt
+*token*.json
+.env
