@@ -232,7 +232,7 @@ def plot_measurement_results(counts, title="Measurement Results", figsize=(10, 6
     ax.grid(axis='y', alpha=0.3)
     
     # Rotate x-labels if many states
-    if len(states) > 8:
+    if len(states) > 3:
         plt.xticks(rotation=45, ha='right')
     
     plt.tight_layout()
