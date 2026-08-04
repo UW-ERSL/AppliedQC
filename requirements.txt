@@ -3,11 +3,7 @@
 # Krishnan Suresh, University of Wisconsin-Madison (2026)
 # https://github.com/UW-ERSL/AppliedQC
 #
-<<<<<<< HEAD
 # Python >= 3.11 required
-=======
-# Python >= 3.10 required
->>>>>>> 200cc7baaec340644cc97cdd8506a1b0b4c2fe7f
 # Install with: pip install -r requirements.txt
 # ============================================================
 
@@ -16,15 +12,9 @@
 # IBM Qiskit + Aer Simulator + IBM Quantum hardware access
 # ------------------------------------------------------------
 qiskit[visualization]==2.4.2
-<<<<<<< HEAD
 qiskit-aer~=0.17.2
 qiskit-ibm-runtime>=0.37.0
 qiskit-algorithms==0.4.0
-=======
-qiskit-aer>=0.17.2
-qiskit-ibm-runtime>=0.37.0
-qiskit-algorithms
->>>>>>> 200cc7baaec340644cc97cdd8506a1b0b4c2fe7f
 
 
 
@@ -36,11 +26,7 @@ git+https://github.com/UW-ERSL/PyEncode.git
 # ------------------------------------------------------------
 # Quantum Signal Processing (Chapters 19)
 # ------------------------------------------------------------
-<<<<<<< HEAD
 pyqsp==0.2.0
-=======
-pyqsp
->>>>>>> 200cc7baaec340644cc97cdd8506a1b0b4c2fe7f
 
 # ------------------------------------------------------------
 # Quantum Annealing (Chapters 5-6)
@@ -49,11 +35,7 @@ pyqsp
 # ------------------------------------------------------------
 dwave-ocean-sdk>=6.1.1
 pyqubo>=1.4.0
-<<<<<<< HEAD
 openjij==0.12.1
-=======
-openjij
->>>>>>> 200cc7baaec340644cc97cdd8506a1b0b4c2fe7f
 
 # ------------------------------------------------------------
 # Scientific Computing
