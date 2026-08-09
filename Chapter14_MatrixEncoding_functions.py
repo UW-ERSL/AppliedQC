@@ -1,5 +1,21 @@
 """
-Chapter 11: Quantum Encoding Functions
+Chapter 14: Matrix Encoding Functions
+
+Companion code for the matrix-encoding chapter.  Two families of block
+encoding are provided:
+
+  * Pauli expansion  -- LCU_Ax / Pauli_Block_Encoding / LCU_fTAx.
+    A is expanded as sum_k c_k P_k and encoded with PREP / SELECT / UNPREP.
+  * Shift decomposition -- Structured_LCU_Ax / Dirichlet_LCU_Ax and friends.
+    Circulant stencils are encoded directly from the cyclic shift, at a fixed
+    two-qubit ancilla register and a tight subnormalization, for every N.
+
+Register convention, used by every builder in this file: the **ancilla
+register is declared first**, so ancilla qubits are the LEAST significant bits
+of the statevector and the system qubits are the most significant.  The
+ancilla-|0> block is therefore obtained by striding the statevector with
+2**num_ancilla (reported as metadata['ancilla_zero_stride']), not by taking a
+leading slice.
 """
 
 import numpy as np
@@ -16,10 +32,15 @@ from Chapter08_QuantumGates_functions import (simulate_statevector, simulate_mea
 def LCU_Ax(A, x, mode='statevector'):
     """Implements the LCU method to compute A|x> via Prep-Select-Unprep framework.
 
-    Convention: system qubits are least significant bits in statevector (declared
-    first in QuantumCircuit), ancilla qubits are most significant bits (declared
-    second). Post-selection on ancilla=|0> extracts the first 2**num_system entries
-    of the statevector.
+    Convention: the ancilla register is declared FIRST in the QuantumCircuit, so
+    ancilla qubits are the least significant bits of the statevector and the
+    system qubits are the most significant.  Post-selection on ancilla = |0>
+    therefore takes every 2**num_ancilla-th amplitude,
+
+        A|x> / alpha  ==  Statevector(qc).data[::2**num_ancilla],
+
+    reported as metadata['ancilla_zero_stride'].  It is NOT the leading
+    2**num_system entries -- that slice mixes ancilla branches and is wrong.
 
     Args:
         A (np.ndarray): Hermitian operator
@@ -37,7 +58,9 @@ def LCU_Ax(A, x, mode='statevector'):
     alpha = np.sum(np.abs(coeffs))
 
     L = len(coeffs)
-    num_ancilla = int(np.ceil(np.log2(L)))
+    # ceil(log2 L) is 0 when A is a single Pauli term; keep one ancilla so that
+    # PREP/UNPREP and the ancilla-|0> post-selection stay well defined.
+    num_ancilla = max(int(np.ceil(np.log2(L))), 1)
     num_system = int(np.ceil(np.log2(A.shape[0])))
 
     # Ancilla declared first -> least significant bits in statevector
@@ -85,7 +108,7 @@ def LCU_Ax(A, x, mode='statevector'):
         qc.measure(qr_anc, cr_anc)
 
     metadata = {
-        'alpha': alpha,
+        'alpha': float(np.real(alpha)),          # real by construction (sum of moduli)
         'num_system': num_system,
         'num_ancilla': num_ancilla,
         'coeffs': coeffs,
@@ -113,15 +136,107 @@ def Pauli_Block_Encoding(A, mode='statevector'):
     return U_matrix, metadata
 
 
+def LCU_fTAx_circuit(f, A, x, add_x_gates=False):
+    """
+    Build the measurement-free circuit whose all-zeros amplitude is f^T A x / alpha.
+
+    This is LCU_Ax followed by U_f^dagger on the system register, and nothing
+    else -- no measurements, so the circuit is a genuine state preparation
+    unitary.  That matters for two reasons:
+
+      * amplitude estimation (Chapter 15) has to invert the state preparation
+        to build the Grover operator Q = (U S_0 U^dag) S_chi; a circuit
+        containing `measure` cannot be inverted;
+      * U_f^dagger acts on the system register ONLY, so it commutes with any
+        measurement of the ancilla register.  Measuring the ancilla first is a
+        bookkeeping choice of the sampling estimator, never a requirement --
+        a system-only unitary cannot entangle anything with the ancilla, and
+        the ancilla-failure branch has zero overlap with |0>_anc both before
+        and after U_f^dagger.
+
+    The resulting amplitude on the all-zeros string of the FULL register is
+
+        <0|_anc <0|_sys  U_obs  |0> = f^T A x / alpha,
+
+    so the unconditional probability is p = |f^T A x|^2 / alpha^2 and the
+    observable is recovered as |f^T A x| = alpha * sqrt(p).  Note this is the
+    *unconditional* probability: it already contains the post-selection cost,
+    so no extra factor of sqrt(p_success) is applied (contrast Eq. 14.16,
+    which belongs to the two-stage post-select-then-sample estimator below).
+
+    Args:
+        f (np.ndarray): Observable vector (normalized internally).
+        A (np.ndarray): Hermitian matrix.
+        x (np.ndarray): Input vector (normalized internally).
+        add_x_gates (bool): Append an X to every qubit, moving the target
+            amplitude from |0...0> to |1...1>.  Set True when handing the
+            circuit to Qiskit's EstimationProblem, whose good state is
+            |1> on each objective qubit; the flip must cover the ancilla
+            qubits as well as the system qubits, since the good state is
+            all-zeros on both registers.
+
+    Returns:
+        qc (QuantumCircuit): Measurement-free circuit on
+            num_ancilla + num_system qubits.
+        metadata (dict): LCU_Ax metadata plus 'good_qubits' (every qubit index)
+            and 'p_success' = ||Ax||^2 / alpha^2 (diagnostic; it does NOT enter
+            the recovery -- see the note above).
+    """
+    f = np.asarray(f, dtype=complex)
+    f = f / np.linalg.norm(f)
+    x = np.asarray(x, dtype=complex)
+    x = x / np.linalg.norm(x)
+
+    qc, metadata = LCU_Ax(A, x, mode='statevector')
+    qr_sys = qc.qregs[1]                      # ancilla first, system second
+
+    qc.append(StatePreparation(f, label='f').inverse(), qr_sys)
+
+    if add_x_gates:
+        qc.x(range(qc.num_qubits))
+
+    metadata['good_qubits'] = list(range(qc.num_qubits))
+    metadata['p_success'] = float(
+        np.linalg.norm(np.asarray(A) @ x) ** 2 / metadata['alpha'] ** 2)
+    return qc, metadata
+
+
+def recover_observable(p, metadata):
+    """|f^T A x| = alpha * sqrt(p) from the unconditional all-zeros probability.
+
+    Use with LCU_fTAx_circuit / amplitude estimation.  There is deliberately no
+    sqrt(p_success) factor here: p is already unconditional.  Equation (14.16),
+    |f^T A x| = sqrt(p_0) * alpha * sqrt(p_success), applies to the two-stage
+    estimator of LCU_fTAx, where p_0 is measured *conditional* on the ancilla
+    having been post-selected to |0>.
+    """
+    return metadata['alpha'] * np.sqrt(np.clip(np.real(p), 0.0, 1.0))
+
+
 def LCU_fTAx(f, A, x, shots=10000, noise_model=None):
     """
-    Compute f^T * A * x by extending the LCU_Ax circuit.
+    Estimate |f^T A x| by sampling the LCU observable circuit.
+
+    Two-stage estimator: post-select the shots whose ancilla read |0...0>, then
+    among those count the fraction whose system read |0...0> after U_f^dagger.
+    That fraction is the conditional p_0 = |f^T A x|^2 / ||Ax||^2, and
+
+        |f^T A x| = sqrt(p_0) * ||Ax||,     ||Ax|| = alpha * sqrt(p_success),
+
+    which is Equation (14.16).  Both registers are measured together at the end
+    of the circuit; the post-selection is done classically in the counting loop
+    below.  (An earlier version measured the ancilla mid-circuit, before
+    U_f^dagger.  That was unnecessary -- U_f^dagger touches only the system
+    register, so it commutes with an ancilla measurement -- and it made the
+    circuit non-invertible, which blocked its reuse for amplitude estimation.
+    See LCU_fTAx_circuit.)
 
     Args:
         f (np.ndarray): Observable vector (will be normalized)
         A (np.ndarray): Matrix
         x (np.ndarray): Input vector
         shots (int): Number of measurements
+        noise_model: Optional noise model passed to the simulator.
 
     Returns:
         inner_product (float): Estimate of |f^T * A * x|
@@ -132,38 +247,30 @@ def LCU_fTAx(f, A, x, shots=10000, noise_model=None):
     # Normalize f
     f = f / np.linalg.norm(f)
 
-    # Step 1: Get the base LCU circuit (statevector mode = no measurements)
-    qc, metadata = LCU_Ax(A, x, mode='statevector')
-   
+    # Step 1: LCU circuit + U_f^dagger, still measurement-free
+    qc, metadata = LCU_fTAx_circuit(f, A, x)
+
     num_system = metadata['num_system']
     num_ancilla = metadata['num_ancilla']
 
-    # Step 2: Get register references by name (robust to ordering)
     qr_anc = qc.qregs[0]  # ancilla: declared first in QuantumCircuit(qr_anc, qr_sys)
     qr_sys = qc.qregs[1]  # system:  declared second
 
-    # Step 3: Add classical registers
+    # Step 2: Add classical registers
     cr_anc = ClassicalRegister(num_ancilla, 'c_anc')
     cr_sys = ClassicalRegister(num_system, 'c_sys')
     qc.add_register(cr_anc)
     qc.add_register(cr_sys)
 
-    # Step 4: Measure ancilla for post-selection
+    # Step 3: Measure both registers at the end.  Post-selection on
+    # ancilla = |0...0> happens classically, in the counting loop below.
     qc.measure(qr_anc, cr_anc)
-    qc.barrier() # This is important
-    
-    # Step 5: Add f-basis rotation on system
-    Uf_gate = StatePreparation(f, label='f').inverse()
-    
-    qc.append(Uf_gate, qr_sys)
-
-    # Step 6: Measure system
     qc.measure(qr_sys, cr_sys)
-   
-    # Step 7: Run circuit
+
+    # Step 4: Run circuit
     counts = simulate_measurements(qc, shots=shots, noise_model=noise_model)
-   
-    # Step 8: Post-process
+
+    # Step 5: Post-process
     ancilla_zero = '0' * num_ancilla
     system_zero  = '0' * num_system
     alpha = metadata['alpha']

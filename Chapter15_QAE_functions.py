@@ -377,68 +377,60 @@ def plot_rounds_wedge(rounds, theta_true):
     return fig
 
 
-
-def build_observable_circuit(A, x, f):
+from Chapter14_MatrixEncoding_functions import LCU_Ax
+ 
+ 
+def build_observable_circuit(A, x, f, add_x_gates=True):
     """
-    Build the system-only circuit that casts fᵀA|x⟩ into IQAE's good state.
-
-    Prepares the post-selected system state A|x⟩/‖A|x⟩‖, rotates the observable
-    direction |f⟩ onto |0…0⟩ with U_f†, and applies X on every qubit so the
-    target amplitude sits on |1…1⟩ -- the "good state" IQAE expects. No ancilla
-    is used; the returned metadata reports the theoretical success probability
-    ‖A|x⟩‖² / α² (with α the L1 norm of the Pauli coefficients of A).
-
+    LCU observable circuit recast into IQAE's good-state framework.
+ 
+    Runs the Chapter 14 PREP / SELECT / UNPREP encoding of A on |x>, appends
+    U_f^dag on the system register, and (by default) flips every qubit so the
+    all-zeros target amplitude sits on |1...1>, which is the good state
+    EstimationProblem expects.
+ 
     Parameters
     ----------
-    A : numpy.ndarray, shape (2**n, 2**n)
-        Operator acting on the system register; its Pauli decomposition sets the
-        normalization constant α.
-    x : numpy.ndarray, shape (2**n,)
-        Input state vector.
-    f : numpy.ndarray, shape (2**n,)
-        Observable direction vector; normalized internally before use.
-
+    A : ndarray, shape (2**n, 2**n)   Hermitian operator.
+    x : ndarray, shape (2**n,)        Input vector; normalised internally.
+    f : ndarray, shape (2**n,)        Observable direction; normalised internally.
+    add_x_gates : bool                Append the X flip.  Set False only if you
+                                      intend to define the good state yourself.
+ 
     Returns
     -------
-    qc : qiskit.QuantumCircuit
-        System-only circuit preparing the IQAE good state.
+    qc : QuantumCircuit
+        num_ancilla + num_system qubits, no measurements (so IQAE can invert it).
     metadata : dict
-        Keys ``alpha``, ``num_system``, ``num_ancilla`` (0), ``p_success`` and
-        ``good_qubits`` (the list of system-qubit indices).
+        The LCU_Ax metadata plus:
+          good_qubits -- every qubit index, ancilla included;
+          p_success   -- ||Ax||^2 / alpha^2, DIAGNOSTIC ONLY; it does not enter
+                         the recovery (see recover_observable).
     """
-    f = f / np.linalg.norm(f)
-
-    # Get alpha from Pauli decomposition
-    pauli_split = SparsePauliOp.from_operator(A)
-    alpha = np.sum(np.abs(pauli_split.coeffs))
-    num_system = int(np.ceil(np.log2(A.shape[0])))
-
-    # Post-selected system state: A|x> / ||A|x>||
-    Ax = A @ x
-    Ax_norm = Ax / np.linalg.norm(Ax)
-
-    # System-only circuit -- no ancilla
-    qc = QuantumCircuit(num_system)
-
-    # Step 1: Prepare A|x>/||A|x>||
-    qc.append(StatePreparation(Ax_norm.astype(complex), label='A|x>'), range(num_system))
-
-    # Step 2: U_f^dag -- rotates |f> -> |0>
-    qc.append(StatePreparation(f.astype(complex), label='Uf').inverse(), range(num_system))
-
-    # Step 3: X gates -- IQAE's good state is |1...1>, ours is |0...0>
-    for i in range(num_system):
-        qc.x(i)
-
-    p_success = np.linalg.norm(Ax)**2 / alpha**2
-    metadata = {
-        'alpha': alpha,
-        'num_system': num_system,
-        'num_ancilla': 0,
-        'p_success': p_success,
-        'good_qubits': list(range(num_system)),
-    }
+    f = np.asarray(f, dtype=complex); f = f / np.linalg.norm(f)
+    x = np.asarray(x, dtype=complex); x = x / np.linalg.norm(x)
+ 
+    # measurement-free LCU: ancilla register declared first (least significant)
+    qc, metadata = LCU_Ax(A, x, mode='statevector')
+    qr_sys = qc.qregs[1]
+ 
+    # U_f^dag on the system register only -- unitary, no post-selection
+    qc.append(StatePreparation(f, label='f').inverse(), qr_sys)
+ 
+    # good state is all-zeros on EVERY qubit; Qiskit wants |1...1>
+    if add_x_gates:
+        qc.x(range(qc.num_qubits))
+ 
+    metadata['alpha'] = float(np.real(metadata['alpha']))
+    metadata['good_qubits'] = list(range(qc.num_qubits))
+    metadata['p_success'] = float(
+        np.linalg.norm(np.asarray(A) @ x) ** 2 / metadata['alpha'] ** 2)
     return qc, metadata
+ 
+ 
+def recover_observable(a, metadata):
+    """|f^T A x| = alpha * sqrt(a).  No sqrt(p_success): a is unconditional."""
+    return metadata['alpha'] * np.sqrt(np.clip(a, 0.0, 1.0))
 
 def square_hole_U_psi(m):
     """2^m x 2^m grid with a centered square hole of side N/2 (area fraction 1/4).
