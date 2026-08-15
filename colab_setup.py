@@ -30,13 +30,16 @@ _BANNER = """
   <div style="font-size:15px; margin-bottom:14px;">
     This is normal and happens only once. It takes a few seconds.
   </div>
-  <div style="font-size:20px; font-weight:700; background:#b45309;
+  <div style="font-size:17px; font-weight:700; background:#b45309;
               color:#ffffff; border-radius:6px; padding:12px 16px;
               display:inline-block;">
-    When it finishes: &nbsp; Runtime &rsaquo; Run all
+    When it finishes, either run this cell again,<br>
+    or choose &nbsp;Runtime &rsaquo; Run all
   </div>
   <div style="font-size:14px; margin-top:14px;">
-    The notebook will then run from top to bottom without stopping.
+    Running this cell again takes a second and confirms the setup; you can
+    then work through the chapter at your own pace.
+    <b>Run all</b> does that and runs every cell, which may take a while.
   </div>
 </div>
 """
@@ -46,9 +49,11 @@ _PLAIN = (
     "   Setup complete. The session is restarting itself.\n"
     "   This is normal and happens only once.\n"
     "\n"
-    "   When it finishes, choose:   Runtime > Run all\n"
+    "   When it finishes, either:\n"
     "\n"
-    "   The notebook will then run from top to bottom.\n"
+    "      - run this cell again, then work through the chapter, or\n"
+    "      - choose  Runtime > Run all  to run everything (may take\n"
+    "        a while on the longer chapters).\n"
     + BAR + "\n"
 )
 
