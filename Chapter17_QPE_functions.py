@@ -90,7 +90,8 @@ def _sortedThetaAndProbabilities(counts, m, nShots):
 
 
 
-def myQPESingleBit(A,v,lambdaUpper,nShots=1000,verbose=True,checkAssumptions=True):
+def myQPESingleBit(A,v,lambdaUpper,nShots=1000,verbose=True,checkAssumptions=True,
+                   seed=None):
 	"""
 	Single-Bit Quantum Phase Estimation
 	====================================
@@ -127,6 +128,9 @@ def myQPESingleBit(A,v,lambdaUpper,nShots=1000,verbose=True,checkAssumptions=Tru
 		Upper bound on eigenvalues of A (for scaling)
 	nShots : int
 		Number of measurement shots for statistics
+	seed : int or None
+		Fixes the simulator RNG so the counts are reproducible.  Leave as
+		None for ordinary use; set it only when the exact output is quoted.
 	verbose : bool
 		Print the raw counts dictionary (default True, as in the book listings)
 	checkAssumptions : bool
@@ -165,7 +169,7 @@ def myQPESingleBit(A,v,lambdaUpper,nShots=1000,verbose=True,checkAssumptions=Tru
 	
 	# Step 5: Measure ancilla to extract phase bit
 	circuit.measure([0], [0])
-	counts = simulate_measurements(circuit,shots=nShots)
+	counts = simulate_measurements(circuit,shots=nShots,seed=seed)
 	if verbose:
 		print('Counts:',counts)
 
@@ -173,7 +177,8 @@ def myQPESingleBit(A,v,lambdaUpper,nShots=1000,verbose=True,checkAssumptions=Tru
 	return _sortedThetaAndProbabilities(counts, 1, nShots)
 
 
-def myQPEMultiBit(A,v,lambdaUpper,m,nShots=1000,verbose=True,checkAssumptions=True):
+def myQPEMultiBit(A,v,lambdaUpper,m,nShots=1000,verbose=True,checkAssumptions=True,
+                  seed=None):
 	"""
 	Multi-Bit Quantum Phase Estimation (Full QPE)
 	==============================================
@@ -216,6 +221,9 @@ def myQPEMultiBit(A,v,lambdaUpper,m,nShots=1000,verbose=True,checkAssumptions=Tr
 		Number of ancilla qubits (determines precision: 2^(-m))
 	nShots : int
 		Number of measurement shots
+	seed : int or None
+		Fixes the simulator RNG so the counts are reproducible.  Leave as
+		None for ordinary use; set it only when the exact output is quoted.
 	verbose : bool
 		Print the raw counts dictionary.  Set False for large m -- at m=8 the
 		dictionary can run to dozens of entries.
@@ -276,7 +284,7 @@ def myQPEMultiBit(A,v,lambdaUpper,m,nShots=1000,verbose=True,checkAssumptions=Tr
 	circuit.measure([*range(0,m)], [*range(0,m)])
 	
 	# Execute circuit and process results
-	counts = simulate_measurements(circuit,shots = nShots)
+	counts = simulate_measurements(circuit,shots = nShots,seed=seed)
 	if verbose:
 		print(counts)
 
@@ -284,7 +292,8 @@ def myQPEMultiBit(A,v,lambdaUpper,m,nShots=1000,verbose=True,checkAssumptions=Tr
 	return _sortedThetaAndProbabilities(counts, m, nShots)
 
 
-def QiskitQPEWrapper(A,v,lambdaUpper,m,nShots=1000,verbose=False,checkAssumptions=True):
+def QiskitQPEWrapper(A,v,lambdaUpper,m,nShots=1000,verbose=False,checkAssumptions=True,
+                     seed=None):
 	"""
 	QPE using Qiskit's Built-in phase_estimation Function
 	======================================================
@@ -331,7 +340,7 @@ def QiskitQPEWrapper(A,v,lambdaUpper,m,nShots=1000,verbose=False,checkAssumption
 	# e.g. 0.375 vs 0.75).  Note U_A here is the EXACT HamiltonianGate, so this
 	# path performs no Trotterization; feed a PauliEvolutionGate to Trotterize.
 	circuit.measure( [*range(0, m)],[*range(m-1,-1,-1)])
-	counts = simulate_measurements(circuit,shots = nShots)
+	counts = simulate_measurements(circuit,shots = nShots,seed=seed)
 	if verbose:
 		print(counts)
 	return _sortedThetaAndProbabilities(counts, m, nShots)
@@ -478,7 +487,8 @@ def topSpectralPeaks(theta, P, m, nPeaks, lambdaUpper=1.0):
 	return np.sort(keep/2**m) * lambdaUpper
 
 
-def estimateEigenvalueQPE(A, v, lambdaUpper, m, qpe=QiskitQPEWrapper, nShots=4000):
+def estimateEigenvalueQPE(A, v, lambdaUpper, m, qpe=QiskitQPEWrapper, nShots=4000,
+                          seed=None):
 	"""
 	Estimate the eigenvalue of Hermitian A associated with the PREPARED state v.
 	============================================================================
@@ -516,7 +526,7 @@ def estimateEigenvalueQPE(A, v, lambdaUpper, m, qpe=QiskitQPEWrapper, nShots=400
 	"""
 	v = np.asarray(v, dtype=complex)
 	v = v / np.linalg.norm(v)                # accept any trial vector, not just unit-norm
-	theta, P = qpe(A, v, lambdaUpper, m, nShots=nShots)
+	theta, P = qpe(A, v, lambdaUpper, m, nShots=nShots, seed=seed)
 	lambdaPeak     = float(theta[int(np.argmax(P))]) * lambdaUpper   # dominant bin
 	lambdaWeighted = float(np.sum(theta * P))        * lambdaUpper   # weighted mean
 	return lambdaPeak, lambdaWeighted

@@ -377,7 +377,9 @@ def plot_rounds_wedge(rounds, theta_true):
     return fig
 
 
-from Chapter14_MatrixEncoding_functions import LCU_Ax
+# LCU_Ax builds the encoding; recover_observable is re-exported from Chapter 14
+# so this module has no second copy of it (see note below).
+from Chapter14_MatrixEncoding_functions import LCU_Ax, recover_observable
  
  
 def build_observable_circuit(A, x, f, add_x_gates=True):
@@ -428,9 +430,10 @@ def build_observable_circuit(A, x, f, add_x_gates=True):
     return qc, metadata
  
  
-def recover_observable(a, metadata):
-    """|f^T A x| = alpha * sqrt(a).  No sqrt(p_success): a is unconditional."""
-    return metadata['alpha'] * np.sqrt(np.clip(a, 0.0, 1.0))
+# recover_observable is NOT redefined here.  Chapter 14 owns the single
+# definition; it is re-exported at the top of this module so that
+# `from Chapter15_QAE_functions import recover_observable` keeps working
+# without creating a second copy that could drift out of sync.
 
 def square_hole_U_psi(m):
     """2^m x 2^m grid with a centered square hole of side N/2 (area fraction 1/4).

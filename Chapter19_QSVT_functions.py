@@ -190,13 +190,30 @@ class SunderhaufPolynomial:
         epsilon : float
             Target L∞ approximation error.
         a : float
-            Lower edge of the domain, a = 1/κ.
+            Lower edge of the domain, a = 1/κ.  Must satisfy 0 < a < 1.
 
         Returns
         -------
         int
             Smallest odd polynomial degree meeting the error target.
+
+        Raises
+        ------
+        ValueError
+            If a is outside (0, 1).  The case a = 1 corresponds to κ = 1, i.e.
+            A is a scalar multiple of the identity; the denominator
+            log((1+a)/(1-a)) then diverges and no finite degree is returned.
+            Without this guard the expression silently yields d = -1 and the
+            failure surfaces much later as "expected deg >= 0" from poly().
         """
+        if not (0.0 < a < 1.0):
+            raise ValueError(
+                f"mindegree: need 0 < a < 1 (a = 1/kappa), got a = {a}. "
+                "a >= 1 means kappa <= 1, i.e. A is a scalar multiple of the "
+                "identity -- its inverse is a scalar multiple of the identity "
+                "too, so no polynomial approximation of 1/x is needed. "
+                "a <= 0 means kappa is infinite (A is singular)."
+            )
         n = math.ceil(
             (np.log(1 / epsilon) + np.log(1 / a) + np.log(1 + a))
             / np.log((1 + a) / (1 - a))
@@ -262,6 +279,18 @@ class myQSVT:
             if abs(self.kappa - self.actual_kappa) > 0.1 * self.actual_kappa:
                 print(f"Warning: specified κ={kappa:.4f} differs from "
                       f"actual κ={self.actual_kappa:.4f}")
+
+        # kappa = 1 means A is a scalar multiple of the identity.  Then A^-1 b
+        # is parallel to b and the QLSP answer is |b> itself; there is no 1/x
+        # to approximate, and delta = 1/kappa = 1 makes the degree formula
+        # divide by log((1+1)/(1-1)) = log(inf).  Catch it here, where the
+        # message can name the matrix, rather than deep inside mindegree().
+        if self.kappa <= 1.0 + 1e-12:
+            raise ValueError(
+                f"kappa = {self.kappa:.6g}: A is (a scalar multiple of) the "
+                "identity, so the normalised solution is just |b> and QSVT has "
+                "nothing to do. Choose a matrix with distinct singular values."
+            )
 
         self.dataOK = self._validate_input()
         self.degree = 0

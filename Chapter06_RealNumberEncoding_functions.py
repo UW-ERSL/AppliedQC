@@ -1,6 +1,6 @@
 """
-Quantum Annealing for QUBO Problems
-====================================
+Real Number Encoding: the box method for linear systems
+=======================================================
 Implements a box-method solver for Quadratic Unconstrained Binary Optimization (QUBO)
 problems using quantum annealing, simulated annealing, or exact solvers.
 
@@ -16,22 +16,22 @@ References:
 
 - PyQUBO documentation for symbolic QUBO construction
 """
-import numpy as np
-import matplotlib.pyplot as plt
-from qiskit import QuantumCircuit, transpile
-from qiskit_aer import Aer
-
-from pyqubo import Binary, Array,Placeholder
-from dimod.reference.samplers import ExactSolver
-import neal
-from dwave.system import LeapHybridSampler, DWaveSampler, EmbeddingComposite
-
+import os
 
 import numpy as np
 import matplotlib.pyplot as plt
-from pyqubo import Binary, Array
+from pyqubo import Array, Placeholder
 from dimod.reference.samplers import ExactSolver
 import neal
+
+# D-Wave cloud access is optional: the exact and simulated-annealing
+# paths below run entirely locally.  Importing dwave.system at module
+# scope would make this file unimportable without the Leap SDK.
+try:
+	from dwave.system import LeapHybridSampler, DWaveSampler, EmbeddingComposite
+	_HAS_DWAVE_SYSTEM = True
+except ImportError:                     # pragma: no cover
+	_HAS_DWAVE_SYSTEM = False
 
 class QUBOBoxSolverClass:
 	"""
@@ -41,7 +41,7 @@ class QUBOBoxSolverClass:
 	
 	Algorithm: Box method with binary encoding
 	- Each continuous variable x_i encoded as: x_i = c_i + L*(-2*q_0 + q_1)
-	- Two qubits per dimension provide ternary discretization {-2L, 0, L}
+	- Two qubits per dimension give four values: {-2L, -L, 0, L}
 	- Box contracts by factor beta when no improvement found
 	- Complexity: O(iterations × sampling_cost)
 	
@@ -94,8 +94,8 @@ class QUBOBoxSolverClass:
 
 		Notes
 		-----
-		Sets ``self.nQubitsPerDimension = 2`` (two qubits per dimension give
-		the ternary encoding {-2L, 0, L}). Prints a message if
+		Sets ``self.nQubitsPerDimension = 2``; two qubits per dimension give
+		the four offsets {-2L, -L, 0, L}. Raises ValueError if
 		``samplingMethod`` is unrecognized.
 		"""
 
@@ -117,14 +117,22 @@ class QUBOBoxSolverClass:
 		# Hybrid: Combines classical and quantum resources for larger problems
 		elif (self.samplingMethod == "hybridQuantumAnnealing"):
 			self.sampler = LeapHybridSampler()
+		# Simulated quantum annealing via openjij (as used in Chapter 5)
+		elif (self.samplingMethod == "openjijAnnealing"):
+			import openjij as oj
+			self.sampler = oj.SQASampler()
 		# Full quantum annealing: Requires D-Wave hardware access
 		elif (self.samplingMethod == "quantumAnnealing"):
 			self.sampler = EmbeddingComposite(DWaveSampler())
 		else:
-			print("Invalid sampling method")
+			raise ValueError(
+				"Unknown samplingMethod %r; expected one of "
+				"'exact', 'simulatedAnnealing', 'openjijAnnealing', "
+				"'hybridQuantumAnnealing', 'quantumAnnealing'"
+				% (self.samplingMethod,))
 
-		# Binary encoding: 2 qubits per dimension gives 4 states, using 3: {-2L, 0, L}
-		self.nQubitsPerDimension = 2  # Fixed for ternary encoding
+		# Binary encoding: 2 qubits per dimension give 4 offsets: {-2L, -L, 0, L}
+		self.nQubitsPerDimension = 2
 		
 	def modelWithPlaceHolders(self):
 		"""
@@ -163,7 +171,7 @@ class QUBOBoxSolverClass:
 				A[i][j] = Placeholder("A[{i}][{j}]".format(i = i, j = j))
 		
 		# Encode continuous variables via binary qubits
-		# x[i] ∈ {c[i]-2L, c[i], c[i]+L} based on qubit states
+		# x[i] ∈ {c[i]-2L, c[i]-L, c[i], c[i]+L} based on qubit states
 		for i in range(self.matrixSize):
 			x[i] = c[i] + L*(-2*q[i][0] + q[i][1])
 		   
@@ -195,11 +203,12 @@ class QUBOBoxSolverClass:
 	   
 		plotColors = ['k','r','b','g','c','m','y']
 		index = iteration % len(plotColors)
-		# Define box vertices based on encoding: {c-2L, c, c+L}
+		# Define box vertices based on encoding: {c-2L, c-L, c, c+L}
 		xBox = [center[0]-2*L, center[0]+L,center[0]+L,center[0]-2*L,center[0]-2*L ]
 		yBox = [center[1]-2*L, center[1]-2*L, center[1]+L, center[1]+L,center[1]-2*L]
 		plt.plot(xBox,yBox,plotColors[index])  
 	 
+		os.makedirs("./results", exist_ok=True)
 		plt.savefig("./results/" + str(iteration) +".png")
 		
 	def QUBOBoxSolve(self,A, b,xGuess = [],debug = False):
@@ -231,7 +240,8 @@ class QUBOBoxSolverClass:
 		--------
 		[x_solution, final_L, iterations, success, n_translations, n_contractions, results]
 		- x_solution: Best approximation to solution
-		- final_L: Final box size (indicator of convergence quality)
+		- final_L: Final box size, a scalar (NOT the box-size history --
+		  for that, read self.LHistory after the call)
 		- iterations: Number of box iterations performed
 		- success: Boolean indicating convergence within tolerance
 		- n_translations: Count of successful box moves
@@ -250,11 +260,11 @@ class QUBOBoxSolverClass:
 		for i in range(self.matrixSize):
 			qSol[i] = self.nQubitsPerDimension*[0]
 		
-		# Set initial box center
+		# Set initial box center.  Copy: xGuess belongs to the caller.
 		if (len(xGuess) == 0 ):
-			center = self.matrixSize*[0]  # Default to origin
+			center = np.zeros(self.matrixSize)  # Default to origin
 		else:
-			center = xGuess
+			center = np.array(xGuess, dtype=float).copy()
 		
 		# Store problem parameters in dictionary for PyQUBO
 		self.modelDictionary = {}
@@ -268,14 +278,17 @@ class QUBOBoxSolverClass:
 		boxSuccess = True
 		nTranslations = 0   # Successful moves
 		nContractions = 0   # Box size reductions
-		PEHat = 0  # Best potential energy found so far
+		# Best potential energy so far = Pi at the starting centre
+		# (0 only when the centre is the origin, so compute it).
+		PEHat = float(0.5*center.dot(A.dot(center)) - center.dot(b))
+		# Box size at each iteration; use for convergence plots.
+		self.LHistory = []
 		
 		# Main box iteration loop
 		for iteration in range(self.boxMaxIteration):
+			self.LHistory.append(L)
 			# Convergence check: box small enough relative to initial size
 			if (L/self.LBox0 < self.relativeTolerance):
-				break
-			if (iteration == self.boxMaxIteration):
 				break
 			
 			# Update box parameters in model
@@ -295,6 +308,8 @@ class QUBOBoxSolverClass:
 				results = self.sampler.sample(bqm, num_reads=self.nSamples)
 			elif (self.samplingMethod == "openjijAnnealing"):
 				results = self.sampler.sample(bqm, num_reads=self.nSamples)
+			elif (self.samplingMethod == "hybridQuantumAnnealing"):
+				results = self.sampler.sample(bqm)
 			elif (self.samplingMethod == "quantumAnnealing"):
 				results = self.sampler.sample(bqm)
 
@@ -330,4 +345,3 @@ class QUBOBoxSolverClass:
 			boxSuccess = False
 	
 		return [np.array(center),L,iteration,boxSuccess,nTranslations,nContractions,results]
-	

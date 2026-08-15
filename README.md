@@ -1,5 +1,5 @@
 # Applied Quantum Computing for Engineers
-### From Theory to Implementation
+### Linear Systems and Optimization
 
 **Krishnan Suresh** | University of Wisconsin–Madison  
 *First Edition, 2026*
@@ -7,7 +7,7 @@
 ---
 
 This repository contains the companion code for the textbook  
-**Applied Quantum Computing for Engineers: From Theory to Implementation**.
+**Applied Quantum Computing for Engineers: Linear Systems and Optimization**.
 
 Each chapter includes a Jupyter notebook for interactive exploration and a Python module of reusable functions. All code is written in Python using [Qiskit](https://qiskit.org/) (gate-based quantum computing) and [D-Wave Ocean](https://docs.ocean.dwavesys.com/) (quantum annealing), and runs on both simulators and real quantum hardware.
 
@@ -115,7 +115,7 @@ If you use this code in your research or teaching, please cite:
 
 ```
 @book{suresh2026appliedqc,
-  title     = {Applied Quantum Computing for Engineers: From Theory to Implementation},
+  title     = {Applied Quantum Computing for Engineers: Linear Systems and Optimization},
   author    = {Suresh, Krishnan},
   year      = {2026},
   edition   = {1},

@@ -330,8 +330,8 @@ class TrussFEM:
         return d, True
     
     def compute_compliance(self, displacements):
-        """Compute compliance."""
-        return displacements @ self.assemble_stiffness()[0] @ displacements
+        """Compute compliance  c = d^T K d  (equivalently f^T d at equilibrium)."""
+        return displacements @ self.assemble_stiffness() @ displacements
     
     def compute_stresses(self, displacements):
         """
@@ -918,8 +918,9 @@ class Poisson2DFD:
         x = np.linspace(self.hx, self.Lx - self.hx, nx)
         y = np.linspace(self.hy, self.Ly - self.hy, ny)
 
-        # meshgrid creates the 2D layout; 'ij' indexing matches your (i, j) lexicographic order
-        X, Y = np.meshgrid(x, y, indexing='ij')
+        # Default 'xy' indexing makes x vary fastest on ravel(), matching the
+        # operator K = kron(I_y, Tx) + r*kron(Ty, I_x), which indexes as n*Nx + m.
+        X, Y = np.meshgrid(x, y)
 
         # Flatten to match the vector u (nx * ny, 2)
         self.coords = np.column_stack((X.ravel(), Y.ravel()))
@@ -948,7 +949,9 @@ class Poisson2DFD:
     def solve(self):
         """Solve -∇²u = f."""
         K = self.assemble_stiffness()
-        rhs = (self.hx * self.hy) * self.f
+        # K was built with r = hx^2/hy^2, so the consistent scaling is hx^2
+        # (hx*hy would be the finite-element load lumping, used in Poisson2DFE).
+        rhs = (self.hx ** 2) * self.f
         u = spsolve(K, rhs)
         return u 
 
@@ -1054,13 +1057,15 @@ class Poisson2DFE:
         # Interior node coordinates (excluding boundaries)
         x_int = np.linspace(self.hx, self.Lx - self.hx, self.n_interior_x)
         y_int = np.linspace(self.hy, self.Ly - self.hy, self.n_interior_y)
-        X_int, Y_int = np.meshgrid(x_int, y_int, indexing='ij')
+        X_int, Y_int = np.meshgrid(x_int, y_int)   # 'xy': x varies fastest
         self.coords = np.column_stack((X_int.ravel(), Y_int.ravel()))
         
         # Build interior node indices
+        # Listed with x varying fastest, to match the ordering of the solution
+        # returned by K = kron(My, Kx) + kron(Ky, Mx).
         interior_nodes = []
-        for i in range(1, self.nx):
-            for j in range(1, self.ny):
+        for j in range(1, self.ny):
+            for i in range(1, self.nx):
                 interior_nodes.append(self.node_index(i, j))
         self.interior_nodes = np.array(interior_nodes)
         # Source term (evaluated at all nodes for assembly)
@@ -2074,53 +2079,6 @@ def truss_grid(M = 8, N = 4, Lx=1.0, E=200e9, A=0.0005):
         fem_model = TrussFEM(nodes, elements, loads, fixed_dofs, E=E, A=A)
         return fem_model
 
-def truss3x3Substructure(E=200e9, A=0.0005):
-    """
-    Build the 3×3 truss and activate a hand-picked 10-member substructure.
-
-    Starts from :func:`truss3x3` and zeroes the area of all bars not in a chosen
-    binary mask, leaving 10 active load-carrying members (a manually designed
-    load path). Inactive members keep zero area.
-
-    Parameters
-    ----------
-    E : float, optional
-        Young's modulus (Pa).
-    A : float or array-like, optional
-        Cross-sectional area(s) (m²) for the active members.
-
-    Returns
-    -------
-    TrussFEM
-        Truss model whose active members form the selected substructure.
-    """
-    fem_model = truss3x3(E=E, A=A)
-    #  Plot with a specific design
-    sub_structure = np.array([
-        # Horizontal members (indices 0-5)
-        1, 1,  # Bottom row: (0,1), (1,2) - CRITICAL for node 1 stability
-        1, 1,  # Middle row: (3,4), (4,5) - lateral bracing
-        0, 0,  # Top row: not needed (nodes 6,8 hanging)
-        
-        # Vertical members (indices 6-11)
-        1, 0,  # Left column: (0,3) active
-        1, 1,  # Center column: (1,4), (4,7) - load path
-        1, 0,  # Right column: (2,5) active
-        
-        # In-square diagonals (indices 12-19)
-        1, 0,  # (0,4) diagonal bracing
-        0, 1,  # (2,4) diagonal bracing
-        1, 0,  # (3,7) diagonal bracing
-        0, 1,  # (5,7) diagonal bracing
-        
-        # Long diagonals (indices 20-25)
-        0, 0, 0, 0, 0, 0
-    ], dtype=int)
-    area = fem_model.A * sub_structure  # Zero area for inactive members
-    fem_model.set_area(area)
-    print(f"Number of active members: {np.sum(sub_structure)}")  # 10 members
-    return fem_model
-
 def truss_10bar(E=200e9, A=0.005):
     """
     Classic 10-bar truss ground structure
@@ -2207,7 +2165,7 @@ def PlaneStressCantilever(nx=60, ny=20, E= 200e9, nu=0.3):
     """
    
     # Create mesh
-    ly = 1.0/ny
+    ly = 1.0
     lx = nx * (ly / ny)
 
     fea2D = PlaneStressFEM(nx=nx, ny=ny, lx=lx, ly=ly, E=E, nu=nu)
@@ -2449,9 +2407,10 @@ class FEA2DHomogenize:
         lx = nx
         ly = ny
         
-        # matrix = 0, inclusion = 1
-        E0 = np.array([E_matrix, E_incl])  # Young's modulus of the two materials
-        nu0 = np.array([nu_matrix, nu_incl])  # Poisson's ratio of the two materials
+        # MicrostructureGenerator encodes  inclusion = 0,  matrix = 1,
+        # so entry 0 of these arrays must carry the INCLUSION properties.
+        E0 = np.array([E_incl, E_matrix])  # Young's modulus of the two materials
+        nu0 = np.array([nu_incl, nu_matrix])  # Poisson's ratio of the two materials
         # Convert to Lame parameters
         lambda_mat = E0 * nu0 / ((1 + nu0) * (1 - 2 * nu0))
         mu_mat = E0 / (2 * (1 + nu0))

@@ -1,11 +1,20 @@
 # ============================================================
-# Applied Quantum Computing for Engineers: From Theory to Implementation
+# Applied Quantum Computing for Engineers: Linear Systems and Optimization
 # Krishnan Suresh, University of Wisconsin-Madison (2026)
 # https://github.com/UW-ERSL/AppliedQC
 #
 # Python >= 3.11 required
 # Install with: pip install -r requirements.txt
 # ============================================================
+
+# ------------------------------------------------------------
+# Quantum Annealing (Chapters 5-6)
+# D-Wave Ocean SDK (dimod, dwave-system, dwave-samplers, etc.)
+# pyqubo is NOT bundled in the SDK and must be listed separately
+# ------------------------------------------------------------
+dwave-ocean-sdk>=6.1.1
+pyqubo>=1.4.0
+openjij==0.12.1
 
 # ------------------------------------------------------------
 # Gate-Based Quantum Computing (Chapters 7-21)
@@ -15,8 +24,6 @@ qiskit[visualization]==2.4.2
 qiskit-aer~=0.17.2
 qiskit-ibm-runtime>=0.37.0
 qiskit-algorithms==0.4.0
-
-
 
 # ------------------------------------------------------------
 # PyEncode for Structured encodings (Chapters 13-14)
@@ -29,19 +36,10 @@ git+https://github.com/UW-ERSL/PyEncode.git
 pyqsp==0.2.0
 
 # ------------------------------------------------------------
-# Quantum Annealing (Chapters 5-6)
-# D-Wave Ocean SDK (dimod, dwave-system, dwave-samplers, etc.)
-# pyqubo is NOT bundled in the SDK and must be listed separately
-# ------------------------------------------------------------
-dwave-ocean-sdk>=6.1.1
-pyqubo>=1.4.0
-openjij==0.12.1
-
-# ------------------------------------------------------------
 # Scientific Computing
 # ------------------------------------------------------------
-numpy>=1.26.0
-scipy>=1.13.0
+numpy==2.4.6
+scipy==1.17.1
 matplotlib>=3.9.0
 
 # ------------------------------------------------------------

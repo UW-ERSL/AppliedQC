@@ -12,8 +12,9 @@ Quantum Advantage Conditions:
 4. b can be efficiently prepared as quantum state
 
 Complexity Comparison:
-- Classical (direct): O(N³) for dense matrices, O(Nκ log(1/ε)) for special cases
-- Classical (iterative, conjugate gradient): O(Nκ log(1/ε)) for well-conditioned SPD
+- Classical (direct): O(N³) for dense matrices, O(N^1.5) for sparse (nested dissection)
+- Classical (iterative, conjugate gradient): O(N s sqrt(κ) log(1/ε)) for SPD systems
+  (note the SQUARE ROOT of κ -- CG converges in O(sqrt(κ)) iterations)
 - HHL (quantum): O(log(N)s²κ²/ε) - exponential speedup in N
 
 Algorithm Overview:
@@ -128,7 +129,7 @@ class myHHL:
 		log₂(N) - qubits for encoding vectors
 	"""
 	def __init__(self, A, b, lambdaUpper,
-			  m = 3,nShots = 1000):
+			  m = 3,nShots = 1000, seed = None, verbose = True):
 		"""
 		Initialize HHL solver with problem data and parameters
 		
@@ -154,6 +155,12 @@ class myHHL:
 		nShots : int (default 1000)
 			Number of circuit shots for both QPE and HHL
 			More shots → better statistics, longer runtime
+		seed : int or None (default None)
+			Fixes the simulator RNG so a run is reproducible.  Leave as None
+			for ordinary use; set it only when the exact output is quoted.
+		verbose : bool (default True)
+			Print the skipped-rotation warning.  Set False inside sweeps that
+			call executeHHL hundreds of times.
 			
 		Validation Checks:
 		-----------------
@@ -169,6 +176,8 @@ class myHHL:
 		self.m = m  # Number of bits to estimate eigenvalues
 		self.nHHLShots = nShots  # Shots for simulating HHL circuit
 		self.nQPEShots = nShots  # Shots for simulating QPE circuit
+		self.seed = seed         # None => fresh sample each run
+		self.verbose = verbose   # False silences the skipped-rotation warning
 		self.N = self.A.shape[0]
 		self.n = int(np.log2(self.N))  # Qubits needed for b and solution
 		self.dataOK = True
@@ -250,21 +259,28 @@ class myHHL:
 		lambda_upper_bound = -np.inf
 		lambda_lower_bound = np.inf
 		
-		# Row-wise Gershgorin circles
+		# Gershgorin: every eigenvalue lies in SOME disc, so the union of the
+		# discs bounds the spectrum.  The lower bound is therefore the MINIMUM
+		# of (center - radius) over all discs, and the upper bound the MAXIMUM
+		# of (center + radius).
 		for i in range(n):
 			center = self.A[i, i]  # Diagonal element
 			radius = np.sum(np.abs(self.A[i, :])) - np.abs(self.A[i, i])  # Off-diagonal sum
 			lambda_upper_bound = max(lambda_upper_bound, center + radius)
 			lambda_lower_bound = min(lambda_lower_bound, center - radius)
 		
-		# For SPD matrices, ensure lower bound > 0
-		if lambda_lower_bound <= 0:
-			# Try column-wise Gershgorin if row-wise gives non-positive bound
-			for j in range(n):
-				center = self.A[j, j]
-				radius = np.sum(np.abs(self.A[:, j])) - np.abs(self.A[j, j])
-				lambda_lower_bound = max(lambda_lower_bound, center - radius)
-		
+		# NOTE: there is deliberately no column-wise "fallback" here.  A is
+		# required to be symmetric, so the column discs are IDENTICAL to the row
+		# discs and can supply no extra information.  A previous version took the
+		# MAXIMUM of (center - radius) whenever the row-wise bound came out <= 0;
+		# that is not a Gershgorin bound at all.  On the 1D Poisson matrix it
+		# returned 1.0 although lambda_min = 0.382, which made executeHHL set
+		# lambdaLower = 0.99 and then silently skip the rotation belonging to the
+		# SMALLEST eigenvalue -- the dominant 1/lambda term in the solution.
+		#
+		# If the honest bound is <= 0 (as it is for the Poisson matrix) then
+		# Gershgorin simply gives no positive floor, and executeHHL falls back to
+		# the QPE-based estimate.  That is the correct answer, not a failure.
 		return lambda_lower_bound, lambda_upper_bound
 
 	
@@ -355,9 +371,13 @@ class myHHL:
 		Only includes phases with θ ≠ 0
 		"""
 		# Sort by measurement count (descending)
-		self.QPECountsSorted = {k: v for k, v in sorted(self.QPECounts.items(), 
-											 key=lambda item: item[1],
-											 reverse=True)}
+		# Sort by count descending, breaking ties on the bitstring so the order is
+		# reproducible.  Qiskit's counts dict does not guarantee a stable key order,
+		# and the order here decides the order in which the controlled rotations are
+		# appended in constructHHLCircuit -- which changed the transpiled circuit,
+		# and hence the sampled result, from one run to the next.
+		self.QPECountsSorted = {k: v for k, v in sorted(self.QPECounts.items(),
+											 key=lambda item: (-item[1], item[0]))}
 		self.thetaTilde  = np.array([])	
 		for key in self.QPECountsSorted:
 			thetaValue = int(key, 2)/(2**self.m)  # Binary to decimal, normalize
@@ -393,6 +413,9 @@ class myHHL:
 		self.HHLCircuit.barrier()
 		
 		# Controlled rotation for each estimated eigenvalue
+		self.nRotations = 0
+		self.nSkipped = 0
+		self.skippedWeight = 0.0
 		for key in self.QPECountsSorted:
 			thetaValue = int(key, 2)/(2**self.m)  # Normalized phase
 			probability = self.QPECountsSorted[key]/self.nQPEShots
@@ -404,9 +427,15 @@ class myHHL:
 			# Convert normalized phase back to eigenvalue estimate
 			lambdaTilde = thetaValue*self.lambdaUpper
 			
-			# Skip if eigenvalue below lower bound (invalid for rotation)
+			# Skip if eigenvalue below lower bound: alpha = 2 asin(lambdaLower/
+			# lambdaTilde) would need asin of an argument > 1.  Skipping is the
+			# mitigation described in the chapter, but it DISCARDS that
+			# eigencomponent, so we record how much weight was lost.
 			if (self.lambdaLower > lambdaTilde):
+				self.nSkipped += 1
+				self.skippedWeight += probability
 				continue
+			self.nRotations += 1
 			
 			# Rotation angle: α = 2·arcsin(C/λ) where C = λ_lower
 			# This maps λ → ancilla rotation such that:
@@ -506,17 +535,25 @@ class myHHL:
 		## Step 1: Run QPE to estimate eigenvalues of A
 		self.QPECircuit = self.constructQPECircuit('QPE')
 		self.QPECircuit.measure([*range(0,self.m)], [*range(0,self.m)]) 
-		self.QPECounts = simulate_measurements(self.QPECircuit, shots=self.nQPEShots)
+		self.QPECounts = simulate_measurements(self.QPECircuit, shots=self.nQPEShots,
+											   seed=self.seed)
 		self.processQPECounts(self.QPECounts)
 		
 		# Step 2: Refine λ_lower estimate using QPE results
 		# Use QPE-based estimate if tighter than Gershgorin
+		# A Gershgorin bound <= 0 carries no positive information (multiplying it
+		# by 0.99 would move it the WRONG way), so it is used only when positive.
+		gershFloor = 0.99*lambda_lower_gershgorin if lambda_lower_gershgorin > 0 else 0.0
 		if len(self.thetaTilde) > 0:
 			lambda_lower_qpe = 0.99 * min(self.thetaTilde) * self.lambdaUpper  # 0.99 for safety margin
-			self.lambdaLower = max(lambda_lower_gershgorin * 0.99, lambda_lower_qpe)
-		else:
-			self.lambdaLower = lambda_lower_gershgorin * 0.99
+			self.lambdaLower = max(gershFloor, lambda_lower_qpe)
+		elif gershFloor > 0:
+			self.lambdaLower = gershFloor
 			print("Warning: No eigenvalues detected by QPE, using Gershgorin only")
+		else:
+			print("Error: QPE found no non-zero eigenphase and Gershgorin gives no "
+				  "positive lower bound; increase m or lower lambdaUpper.")
+			return False
 			
 		#print(f"λ_lower (Gershgorin): {lambda_lower_gershgorin:.6f}")
 		#if len(self.thetaTilde) > 0: print(f"λ_lower (QPE): {lambda_lower_qpe:.6f}")
@@ -524,7 +561,16 @@ class myHHL:
 
 		# Step 3: Construct and run full HHL circuit
 		self.constructHHLCircuit()
-		self.HHLRawCounts = simulate_measurements(self.HHLCircuit, shots=self.nHHLShots)
+		# The chapter notes that significant skipping makes the result
+		# unreliable; say so out loud rather than leaving it silent.
+		if self.nSkipped > 0 and self.verbose:
+			print(f'Warning: {self.nSkipped} controlled rotation(s) skipped '
+				  f'(lambdaLower = {self.lambdaLower:.4f} exceeds those eigenvalue '
+				  f'estimates); {100*self.skippedWeight:.1f}% of the QPE weight was '
+				  f'discarded. The HHL solution may be unreliable.')
+		# offset the seed so the HHL circuit does not reuse the QPE sample
+		self.HHLRawCounts = simulate_measurements(self.HHLCircuit, shots=self.nHHLShots,
+												  seed=None if self.seed is None else self.seed+1)
 		
 		# Step 4: Extract solution from post-selected measurements
 		if not self.extractHHLSolution():
@@ -546,7 +592,10 @@ class myHHL:
 		self.computeEigen()
 		print("Exact eigen values of A:\n", self.eig_val)
 		print("Exact eigen vectors of A:\n", self.eig_vec)
-		eigenPhase = self.b*self.eig_val/self.lambdaUpper
+		# theta_k = lambda_k / lambdaUpper.  (This used to read
+		# `self.b*self.eig_val/...`; the b factor does not belong, and it made
+		# the validity check below under-report by a factor of max|b_i|.)
+		eigenPhase = self.eig_val/self.lambdaUpper
 		tMax = 2*np.pi/max(self.eig_val)
 		print("Exact eigenphases of A:\n", eigenPhase)
 		if (max(eigenPhase) >= 1):

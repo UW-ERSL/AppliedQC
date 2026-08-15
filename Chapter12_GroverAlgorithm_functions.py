@@ -1,42 +1,30 @@
 """
-Landmark Quantum Algorithms
-============================
-Implementations of foundational quantum algorithms demonstrating quantum advantage.
+Grover's algorithm helpers for Chapter 12, "Grover Algorithm".
 
-Algorithms Included:
---------------------
-1. Bernstein-Vazirani (BV): Finds hidden bitstring in single query (vs n queries classically)
-2. Grover's Search: Finds marked element in O(sqrt(N)) queries (vs O(N) classically)
+Utilities for building the Boolean expressions that Qiskit's
+``PhaseOracleGate`` consumes, and for the two engineering searches in the
+chapter:
 
-Key Quantum Concepts:
----------------------
-- Quantum parallelism: Evaluate function on superposition of all inputs simultaneously
-- Phase kickback: Oracle marks solutions by phase flip
-- Amplitude amplification: Increase probability of measuring correct answer
+* ``bitstring_to_expression`` -- a bitstring (or a Boolean combination of
+  bitstrings) to a conjunction over x0, x1, ... in little-endian order.
+* ``get_qiskit_expression``   -- pad an expression with tautologies so the
+  oracle sees every variable, in index order.
+* ``get_feasible_expression`` -- the 7-variable truss feasibility CNF used in
+  Sections 12.4-12.7; it has exactly one satisfying assignment.
+* ``get_void_expression`` / ``decode_void_measurement`` -- coordinate encoding
+  for the microstructure void search of Section 12.8.
 
-Computational Complexity:
--------------------------
-- BV: 1 quantum query vs n classical queries (exponential speedup)
-- Grover: O(sqrt(N)) vs O(N) classical (quadratic speedup)
-  Optimal iterations ≈ π/4 * sqrt(N)
-  
-References:
------------
-- Bernstein & Vazirani (1997): Quantum complexity theory
-- Grover (1996): Fast quantum mechanical algorithm for database search
-- Nielsen & Chuang (2010): Quantum Computation and Quantum Information, Ch. 6
+Grover's algorithm itself is assembled in the text from Qiskit's
+``grover_operator``; there is no Grover driver here.
+
+Reference: Grover (1996), "A fast quantum mechanical algorithm for database
+search"; Nielsen & Chuang (2010), Chapter 6.
 """
+import re
+
 import numpy as np
-from IPython.display import display
 
-from qiskit import QuantumCircuit
-from qiskit.quantum_info import  Operator
-from qiskit.circuit.library import  MCXGate, PhaseOracle
-from qiskit import QuantumCircuit
-from qiskit.circuit.library import PhaseOracleGate
-
-from Chapter08_QuantumGates_functions import  simulate_measurements
-import math
+from qiskit.circuit.library import PhaseOracleGate  # noqa: F401  (re-exported for the notebook)
 
 def bitstring_to_expression(bitstring_expr: str):
     """Convert bitstring or Boolean expression of bitstrings to PhaseOracleGate expression.
@@ -58,8 +46,6 @@ def bitstring_to_expression(bitstring_expr: str):
         for i, bit in enumerate(reversed_bits):
             terms.append(f"x{i}" if bit == '1' else f"~x{i}")
         return " & ".join(terms)
-    
-    import re
 
     expr = bitstring_expr.strip()
 

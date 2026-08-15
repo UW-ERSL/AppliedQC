@@ -1,5 +1,10 @@
 """
-Chapter 12: Quantum Vector Encoding - Functions 
+Gate-count helper for Chapter 13, "Vector Encoding".
+
+One function, used to produce Table 13.1: it hands a vector to Qiskit's
+general-purpose state-preparation synthesis and counts the resulting gates,
+so that the cost of ignoring structure can be compared against the
+hand-crafted and PyEncode circuits of the chapter.
 """
 
 from qiskit import QuantumCircuit
@@ -18,7 +23,7 @@ def gate_count(b, m):
     ----------
     b : array_like
         State vector of length ``2**m`` giving the amplitudes to encode. Passed to
-        ``QuantumCircuit.initialize`` (should be normalized).
+        ``QuantumCircuit.prepare_state`` (should be normalized).
     m : int
         Number of qubits in the circuit.
 
@@ -31,7 +36,9 @@ def gate_count(b, m):
         Total number of gates, i.e. the sum of all values in ``ops``.
     """
     qc = QuantumCircuit(m)
-    qc.initialize(b)
+    # prepare_state, not initialize: initialize prepends one reset per qubit,
+    # which would add m gates to every count in Table 13.1.
+    qc.prepare_state(b, range(m))
     qc_decomposed = transpile(qc, basis_gates=['u', 'cx'],
                               optimization_level=3)
     ops = qc_decomposed.count_ops()

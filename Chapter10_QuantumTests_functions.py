@@ -1,204 +1,61 @@
-
 """
-Quantum Circuits for Woodbury Algorithm
-========================================
-Hadamard test and inner product estimation for quantum linear algebra.
+Quantum test circuits for Chapter 10, "Quantum Tests".
 
-References:
-- O'Malley et al. (2024): "Quantum Woodbury algorithm", Quantum 8, 1188
-- Nielsen & Chuang (2010): Chapter on quantum algorithms
+Two helpers used by the chapter: the RY/RZ rotation matrices from which the
+combined unitary U = U_phi^dag U_psi of the Hadamard test is built, and a
+multi-qubit inner-product estimator that applies a controlled-SWAP between
+each corresponding pair of qubits in two registers.
+
+The Hadamard-test and swap-test circuits themselves are built inline in the
+listings and in the notebook.
+
+Reference
+---------
+Buhrman, Cleve, Watrous and de Wolf (2001), "Quantum fingerprinting",
+Phys. Rev. Lett. 87, 167902 --- the swap test.
 """
 
 import numpy as np
 
-from qiskit import QuantumCircuit, transpile
-from qiskit_aer import Aer
 from qiskit import QuantumCircuit, QuantumRegister, ClassicalRegister
 
 from Chapter08_QuantumGates_functions import simulate_measurements #type: ignore
 
-
 def ryMatrix(alpha):
-	"""
-	Return the 2x2 rotation matrix R_y(α) about the Bloch-sphere y-axis.
+    """
+    Return the 2x2 rotation matrix R_y(α) about the Bloch-sphere y-axis.
 
-	R_y(α) = [[cos(α/2), -sin(α/2)], [sin(α/2), cos(α/2)]].
+    R_y(α) = [[cos(α/2), -sin(α/2)], [sin(α/2), cos(α/2)]].
 
-	Parameters
-	----------
-	alpha : float
-		Rotation angle α (radians).
+    Parameters
+    ----------
+    alpha : float
+        Rotation angle α (radians).
 
-	Returns
-	-------
-	numpy.ndarray
-		Real (2, 2) unitary rotation matrix.
-	"""
-	return np.array([[np.cos(alpha/2), -np.sin(alpha/2)], [np.sin(alpha/2), np.cos(alpha/2)]])
+    Returns
+    -------
+    numpy.ndarray
+        Real (2, 2) unitary rotation matrix.
+    """
+    return np.array([[np.cos(alpha/2), -np.sin(alpha/2)], [np.sin(alpha/2), np.cos(alpha/2)]])
 
 def rzMatrix(omega):
-	"""
-	Return the 2x2 rotation matrix R_z(ω) about the Bloch-sphere z-axis.
-
-	R_z(ω) = diag(e^{-iω/2}, e^{+iω/2}), a diagonal phase rotation.
-
-	Parameters
-	----------
-	omega : float
-		Rotation angle ω (radians).
-
-	Returns
-	-------
-	numpy.ndarray
-		Complex (2, 2) diagonal unitary rotation matrix.
-	"""
-	return np.array([[np.exp(-1j*omega/2), 0], [0, np.exp(1j*omega/2)]])
-
-# State preparation circuits (Hadamard = uniform superposition)
-def hadamards(n_qubits):
     """
-    Build a circuit that applies a Hadamard to every qubit.
+    Return the 2x2 rotation matrix R_z(ω) about the Bloch-sphere z-axis.
 
-    Places one H gate on each of the ``n_qubits`` wires, mapping |0...0⟩ to
-    the uniform superposition over all 2**n_qubits basis states. Used as a
-    state-preparation routine for the Hadamard-test circuits.
+    R_z(ω) = diag(e^{-iω/2}, e^{+iω/2}), a diagonal phase rotation.
 
     Parameters
     ----------
-    n_qubits : int
-        Number of qubits in the circuit.
+    omega : float
+        Rotation angle ω (radians).
 
     Returns
     -------
-    qiskit.QuantumCircuit
-        Circuit of width ``n_qubits`` with a Hadamard on each qubit.
+    numpy.ndarray
+        Complex (2, 2) diagonal unitary rotation matrix.
     """
-    qc = QuantumCircuit(n_qubits)
-    for i in range(n_qubits):
-        qc.h(i)
-    return qc
-
-
-def hadamard_test_circuit(u, psi_prep, complex_test=False):
-    """
-    Hadamard test circuit for estimating <psi|U|psi>.
-    
-    Parameters
-    ----------
-    u : Gate
-        Unitary operator to test
-    psi_prep : QuantumCircuit  
-        Circuit preparing |psi>
-    complex_test : bool
-        False for Re(<psi|U|psi>), True for Im(<psi|U|psi>)
-    
-    Returns
-    -------
-    QuantumCircuit
-        Hadamard test circuit with measurement on ancilla qubit
-    """
-    u_controlled = u.control(1)
-    ht_circuit = QuantumCircuit(u_controlled.num_qubits, 1)
-    ht_circuit.h(0)
-    if complex_test:
-        ht_circuit.p(-np.pi / 2, 0)
-    ht_circuit.append(psi_prep, list(range(1, u_controlled.num_qubits)))
-    ht_circuit.append(u_controlled, list(range(u_controlled.num_qubits)))
-    ht_circuit.h(0)
-    ht_circuit.measure(0, 0)
-    return ht_circuit
-
-
-def hadamard_test_expval(counts, bias_matrix=None):
-    """
-    Extract expectation value from Hadamard test counts.
-    
-    Parameters
-    ----------
-    counts : dict
-        {'0': n0, '1': n1} measurement counts
-    bias_matrix : array, optional
-        2x2 measurement error correction matrix
-    
-    Returns
-    -------
-    float
-        Expectation value (2*P(0) - 1)
-    """
-    c0 = counts.get('0', 0)
-    c1 = counts.get('1', 0)
-    
-    if bias_matrix is not None:
-        c0, c1 = np.linalg.solve(bias_matrix, [c0, c1])
-    
-    total = c0 + c1
-    return (c0 - c1) / total if total > 0 else 0.0
-
-
-def hadamard_inner_product(y_prep, x_prep, shots, backend=None, isreal=False):
-    """
-    Compute <y|x> using Hadamard test.
-    """
-    if backend is None:
-        backend = Aer.get_backend('qasm_simulator')
-    
-    # Build U = |x><y|^† circuit - CONVERT TO GATES FIRST
-    qc = QuantumCircuit(x_prep.num_qubits)
-    qc.append(x_prep.to_gate(), range(x_prep.num_qubits))
-    qc.append(y_prep.inverse().to_gate(), range(x_prep.num_qubits))
-    u_gate = qc.to_gate()
-    
-    # Hadamard tests for real and imaginary parts
-    ht_real = hadamard_test_circuit(u_gate, y_prep.to_gate(), complex_test=False)
-    
-    if isreal:
-        counts_real = simulate_measurements(ht_real, shots= shots)
-        return hadamard_test_expval(counts_real)
-    else:
-        ht_imag = hadamard_test_circuit(u_gate, y_prep.to_gate(), complex_test=True)
-        counts_real = simulate_measurements(ht_real, shots= shots)
-        counts_imag = simulate_measurements(ht_imag, shots= shots)
-        
-        real_part = hadamard_test_expval(counts_real)
-        imag_part = hadamard_test_expval(counts_imag)
-        return complex(real_part, imag_part)
-
-
-def woodbury_rank1_query(z_prep, b_prep, v_prep, u_prep, alpha, beta, shots, backend=None):
-    """
-    Quantum Woodbury algorithm for rank-1 update.
-    
-    Computes: <z|x> where x solves (K + alpha*beta*u*v^T)x = b
-    Using Woodbury: x = b - (alpha*beta*<v|b>)/(1 + alpha*beta*<v|u>) * u
-    
-    Parameters
-    ----------
-    z_prep : QuantumCircuit
-        Query vector |z>
-    b_prep : QuantumCircuit
-        Right-hand side |b>
-    v_prep, u_prep : QuantumCircuit
-        Update vectors |v>, |u>
-    alpha, beta : float
-        Woodbury parameters
-    shots : int
-        Measurement shots per Hadamard test
-    backend : Backend, optional
-        Quantum backend
-    
-    Returns
-    -------
-    float
-        Query result <z|x>
-    """
-    # Four inner products via Hadamard tests
-    zb = hadamard_inner_product(z_prep, b_prep, shots, backend, isreal=True)
-    vb = hadamard_inner_product(v_prep, b_prep, shots, backend, isreal=True)
-    vu = hadamard_inner_product(v_prep, u_prep, shots, backend, isreal=True)
-    zu = hadamard_inner_product(z_prep, u_prep, shots, backend, isreal=True)
-    
-    # Woodbury formula
-    return zb - alpha * beta * vb / (1 + alpha * beta * vu) * zu
+    return np.array([[np.exp(-1j*omega/2), 0], [0, np.exp(1j*omega/2)]])
 
 def innerProductEstimation(ua, ub, shots = 10000):
     """
@@ -221,7 +78,7 @@ def innerProductEstimation(ua, ub, shots = 10000):
         Estimated |<ua|ub>|
     """
     # --- 2. Circuit Setup ---
-    num_data_qubits = int(np.log2(len(ua))) # log2(32) = 5
+    num_data_qubits = int(np.log2(len(ua)))
     q_aux = QuantumRegister(1, 'anc')
     q_psi = QuantumRegister(num_data_qubits, 'A')
     q_phi = QuantumRegister(num_data_qubits, 'B')
@@ -258,7 +115,3 @@ def innerProductEstimation(ua, ub, shots = 10000):
     overlap_squared = max(0, 2 * p0 - 1)
     innerProduct = np.sqrt(overlap_squared)
     return innerProduct, qc
-
-
-
-

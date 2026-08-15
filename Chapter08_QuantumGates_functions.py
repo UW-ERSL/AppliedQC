@@ -48,10 +48,19 @@ def simulate_statevector(circuit):
     return job.result().get_statevector()
 
 
-def simulate_measurements(circuit, shots, transpiled = False, noise_model=None):
+def simulate_measurements(circuit, shots, transpiled = False, noise_model=None,
+                          seed=None):
     """
     Simulate circuit and return measurement counts.
     Circuit must have measurements.
+
+    Parameters
+    ----------
+    seed : int or None
+        If given, fixes both the sampling and the transpiler RNG so the
+        returned counts are reproducible run to run.  Leave as None (the
+        default) for ordinary use; set it only when the exact counts are
+        going to be quoted, e.g. in a printed listing.
     """
     
     if not circuit.num_clbits:
@@ -64,10 +73,21 @@ def simulate_measurements(circuit, shots, transpiled = False, noise_model=None):
     
     if not transpiled:
         circuit = circuit.decompose(reps=3)
-        circuit_transpiled = transpile(circuit, simulator)
-        job = simulator.run(circuit_transpiled, shots=shots)
+        # When a seed is requested we also pin optimization_level=1.  The
+        # default level runs unitary-synthesis passes whose numerical output is
+        # not bit-reproducible, so seed_transpiler alone does NOT guarantee the
+        # same transpiled circuit -- and a different circuit consumes the RNG
+        # differently, giving different counts.  Levels 0 and 1 are stable.
+        if seed is None:
+            circuit_transpiled = transpile(circuit, simulator)
+        else:
+            circuit_transpiled = transpile(circuit, simulator,
+                                           seed_transpiler=seed,
+                                           optimization_level=1)
+        job = simulator.run(circuit_transpiled, shots=shots,
+                            seed_simulator=seed)
     else:
-        job = simulator.run(circuit, shots=shots)
+        job = simulator.run(circuit, shots=shots, seed_simulator=seed)
         print(job)
     
     
