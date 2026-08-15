@@ -20,6 +20,38 @@ STAMP_RESTART = "/content/.appliedqc_restarted"
 
 BAR = "  " + "=" * 58
 
+_BANNER = """
+<div style="border:2px solid #b45309; background:#fffbeb; color:#7c2d12;
+            border-radius:8px; padding:18px 22px; margin:10px 0;
+            font-family:Roboto,Arial,sans-serif; line-height:1.5;">
+  <div style="font-size:19px; font-weight:700; margin-bottom:8px;">
+    Setup complete &mdash; the session is restarting itself.
+  </div>
+  <div style="font-size:15px; margin-bottom:14px;">
+    This is normal and happens only once. It takes a few seconds.
+  </div>
+  <div style="font-size:20px; font-weight:700; background:#b45309;
+              color:#ffffff; border-radius:6px; padding:12px 16px;
+              display:inline-block;">
+    When it finishes: &nbsp; Runtime &rsaquo; Run all
+  </div>
+  <div style="font-size:14px; margin-top:14px;">
+    The notebook will then run from top to bottom without stopping.
+  </div>
+</div>
+"""
+
+_PLAIN = (
+    "\n" + BAR + "\n"
+    "   Setup complete. The session is restarting itself.\n"
+    "   This is normal and happens only once.\n"
+    "\n"
+    "   When it finishes, choose:   Runtime > Run all\n"
+    "\n"
+    "   The notebook will then run from top to bottom.\n"
+    + BAR + "\n"
+)
+
 
 def _install():
     if os.path.exists(STAMP_INSTALL):
@@ -42,13 +74,12 @@ def _wanted_numpy():
 
 def _restart_session():
     """Restart the kernel so the newly installed NumPy becomes active."""
-    print("\n" + BAR)
-    print("   Setup complete. Restarting the session now -- this is normal.")
-    print("")
-    print("   When the restart finishes (a few seconds), run this cell")
-    print("   again. It will be quick, and the notebook will then run")
-    print("   from top to bottom without interruption.")
-    print(BAR + "\n")
+    try:
+        from IPython.display import display, HTML
+        display(HTML(_BANNER))
+    except Exception:
+        pass
+    print(_PLAIN)          # plain text too, so it survives export and nbconvert
     sys.stdout.flush()
 
     open(STAMP_RESTART, "w").close()
