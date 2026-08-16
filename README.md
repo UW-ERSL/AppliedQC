@@ -119,7 +119,7 @@ If you use this code in your research or teaching, please cite:
   author    = {Suresh, Krishnan},
   year      = {2026},
   edition   = {1},
-  publisher = {},
+  publisher = {Amazon KDP},
   url       = {https://github.com/UW-ERSL/AppliedQC}
 }
 ```
