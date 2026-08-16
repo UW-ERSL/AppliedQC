@@ -178,7 +178,7 @@ def myQPESingleBit(A,v,lambdaUpper,nShots=1000,verbose=True,checkAssumptions=Tru
 
 
 def myQPEMultiBit(A,v,lambdaUpper,m,nShots=1000,verbose=True,checkAssumptions=True,
-                  seed=None):
+                  seed=None,returnCircuit=False):
 	"""
 	Multi-Bit Quantum Phase Estimation (Full QPE)
 	==============================================
@@ -229,12 +229,18 @@ def myQPEMultiBit(A,v,lambdaUpper,m,nShots=1000,verbose=True,checkAssumptions=Tr
 		dictionary can run to dozens of entries.
 	checkAssumptions : bool
 		Warn if A has a negative eigenvalue or lambdaUpper <= lambda_max
+	returnCircuit : bool
+		Also return the QPE circuit that was built and run.  Off by default so
+		the usual two-value unpacking keeps working; set it True when the
+		circuit itself is the object of interest, e.g. to draw it.
 
 	Returns:
 	--------
 	[thetaEstimates, probabilities] : list of ndarrays
 		Sorted phase estimates and their measured probabilities
 		thetaEstimates[i] = binary_to_decimal(measurement_i) / 2^m
+		With returnCircuit=True the list is
+		[thetaEstimates, probabilities, circuit] instead.
 		
 	Accuracy Notes:
 	- For exact eigenstate: peak probability at true phase
@@ -289,7 +295,10 @@ def myQPEMultiBit(A,v,lambdaUpper,m,nShots=1000,verbose=True,checkAssumptions=Tr
 		print(counts)
 
 	# Convert m-bit bitstrings to phases in [0,1), sorted by decreasing probability
-	return _sortedThetaAndProbabilities(counts, m, nShots)
+	theta, P = _sortedThetaAndProbabilities(counts, m, nShots)
+	if returnCircuit:
+		return [theta, P, circuit]
+	return [theta, P]
 
 
 def QiskitQPEWrapper(A,v,lambdaUpper,m,nShots=1000,verbose=False,checkAssumptions=True,

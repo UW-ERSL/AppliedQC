@@ -447,6 +447,12 @@ class myHHL:
 			cu_gate = UGate(alpha, 0, 0).control(self.m, ctrl_state = key) 
 			self.HHLCircuit.append(cu_gate,[*range(1,1+self.m),0])  # Control: phases, Target: ancilla
 			
+		# Snapshot of the intermediate stage: QPE front end plus the controlled
+		# rotations, before the inverse QPE is appended.  Keeping a copy costs
+		# nothing, leaves self.HHLCircuit untouched, and is what the circuit
+		# figure of this stage is drawn from.
+		self.QPERotationCircuit = self.HHLCircuit.copy()
+		
 		# Uncompute QPE (disentangle eigenvalue information)
 		qpeInverse = self.constructQPECircuit('HHLRear').inverse()
 		self.HHLCircuit.barrier()
