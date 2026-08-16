@@ -354,8 +354,9 @@ def circulant_tridiagonal(N, a=2.0, b=-1.0, dtype=complex):
         S[(j + 1) % N, j] = 1.0          # S|j> = |(j+1) mod N>
 
     A = a * np.eye(N, dtype=complex) + b * S + np.conj(b) * S.conj().T
-    if dtype is not complex:
-        A = np.real_if_close(A).astype(dtype)
+    A = np.real_if_close(A)
+    if dtype is not complex and not np.iscomplexobj(A):
+        A = A.astype(dtype)          # downcast only when genuinely real
     return A
 
 
@@ -824,8 +825,9 @@ def dirichlet_laplacian(N, a=2.0, b=-1.0, dtype=float):
     A = circulant_tridiagonal(N, a=a, b=b)
     A[0, N - 1] = 0.0                 # wrap-around from S_c
     A[N - 1, 0] = 0.0                 # wrap-around from S_c^dagger
-    if dtype is not complex:
-        A = np.real_if_close(A).astype(dtype)
+    A = np.real_if_close(A)
+    if dtype is not complex and not np.iscomplexobj(A):
+        A = A.astype(dtype)          # downcast only when genuinely real
     return A
 
 
@@ -833,6 +835,14 @@ def Dirichlet_LCU_Ax(N, x=None, a=2.0, b=-1.0, mode='statevector'):
     """Structured encoding of the *Dirichlet* (open-boundary) stencil, obtained
     from the periodic circuit by flagging the wrap-around contributions into a
     failure subspace.
+    
+    The correction below is *not* the construction of Kharazi et al., who
+    compose each shift with a reflection about the boundary node (their
+    Eq. 49, a five-term LCU).  We instead flag the wrap-around contributions
+    into a failure subspace.  Both reach (alpha = 4, 3 ancillas); the flag
+    route keeps three LCU terms and spends the third ancilla on the flag,
+    the reflection route spends it on the larger LCU register.  The flag is
+    used here because it reuses the periodic SELECT verbatim.
 
     The decomposition is not re-derived: it is still the three-term
         A = a I + b S_c + conj(b) S_c^dagger
@@ -872,6 +882,8 @@ def Dirichlet_LCU_Ax(N, x=None, a=2.0, b=-1.0, mode='statevector'):
         qc (QuantumCircuit): The circuit, with registers (a, flag, s).
         metadata (dict): alpha, num_system, num_ancilla (LCU + flag),
             num_lcu_ancilla, ancilla_zero_stride, A, terms, coeffs.
+
+    
     """
     if N < 4 or (N & (N - 1)) != 0:
         raise ValueError("N must be a power of two and at least 4.")
