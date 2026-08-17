@@ -38,7 +38,7 @@ from Chapter08_QuantumGates_functions import (simulate_statevector, simulate_mea
                                               findActualHardwareRequirements, plot_measurement_results)
 
 
-def trignometricSignal(t,c = [],s = []):
+def trigonometricSignal(t,c = [],s = []):
 	"""
 	Generate trigonometric signal from Fourier coefficients
 	========================================================
