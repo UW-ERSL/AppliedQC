@@ -978,3 +978,91 @@ def Dirichlet_Block_Encoding(N, a=2.0, b=-1.0):
     """
     qc, metadata = Dirichlet_LCU_Ax(N, x=None, a=a, b=b, mode='statevector')
     return Operator(qc).data, metadata
+
+def recover_Ax_from_counts(counts, metadata, shots=None):
+    """
+    Recover the magnitudes |(A x)_j| from post-selected LCU measurement counts.
+
+    This is the sampling counterpart of the statevector read-out used in
+    Example 14.18.  Where the statevector route strides the exact amplitudes,
+    a real device only returns counts, so the recovery runs in two stages:
+
+      1. Post-select the shots whose ancilla register read |0...0>.  Their
+         fraction is p_success, and ||A x|| = alpha * sqrt(p_success).
+      2. Within that branch the system register is distributed as
+         p_j = |(A x)_j|^2 / ||A x||^2, so |(A x)_j| = sqrt(p_j) * ||A x||.
+
+    Only magnitudes survive: sampling discards the sign (and phase) of every
+    component.  A component that is exactly zero in A x is therefore not
+    recovered as "zero with a sign" but as a small positive number, and on
+    hardware that number is dominated by noise rather than by statistics --
+    which is the point of running this on a device at all.
+
+    Args:
+        counts (dict): Outcome -> count, keyed as 'sys_bits anc_bits'.  This is
+            what simulate_measurements returns for a circuit built by
+            LCU_Ax(mode='measurement'), and -- via _counts_from_pub -- what
+            runCircuitOnIBMQuantum returns for the same circuit.
+        metadata (dict): The LCU_Ax metadata (alpha, num_system, num_ancilla).
+        shots (int, optional): Total shots.  Defaults to the sum of counts.
+
+    Returns:
+        dict with keys
+            'Ax_abs'    : (2**num_system,) estimates of |(A x)_j|
+            'sigma_Ax'  : one-sigma shot-noise band on each |(A x)_j|
+            'probs'     : post-selected system probabilities p_j
+            'p_success' : fraction of shots surviving post-selection
+            'norm_Ax'   : alpha * sqrt(p_success)
+            'kept'      : number of post-selected shots
+
+    Note:
+        'sigma_Ax' propagates the binomial error on p_j only, holding ||A x||
+        fixed; it is the *within-branch* sampling band.  For a component with
+        zero counts the band is reported as the one-sigma upper limit
+        ||A x|| / sqrt(kept), since the point estimate is pinned at 0.
+    """
+    if shots is None:
+        shots = sum(counts.values())
+    if shots == 0:
+        raise ValueError("No shots recorded")
+
+    num_system = metadata['num_system']
+    num_ancilla = metadata['num_ancilla']
+    alpha = metadata['alpha']
+    ancilla_zero = '0' * num_ancilla
+
+    kept = np.zeros(2 ** num_system, dtype=float)
+    for outcome, count in counts.items():
+        parts = outcome.split()
+        if len(parts) != 2:
+            raise ValueError(
+                "Expected counts keyed as 'sys_bits anc_bits'; got "
+                f"{outcome!r}.  Build the circuit with LCU_Ax(mode='measurement')."
+            )
+        sys_bits, anc_bits = parts            # register added last is leftmost
+        if anc_bits == ancilla_zero:
+            kept[int(sys_bits, 2)] += count
+
+    n_kept = kept.sum()
+    p_success = n_kept / shots
+    norm_Ax = alpha * np.sqrt(p_success)
+
+    if n_kept == 0:
+        zeros = np.zeros(2 ** num_system)
+        return {'Ax_abs': zeros, 'sigma_Ax': zeros, 'probs': zeros,
+                'p_success': 0.0, 'norm_Ax': 0.0, 'kept': 0}
+
+    probs = kept / n_kept
+    Ax_abs = np.sqrt(probs) * norm_Ax
+
+    # d|Ax_j| / dp_j = norm_Ax / (2 sqrt(p_j)); undefined at p_j = 0, where the
+    # estimate is pinned at zero and only an upper limit is meaningful.
+    sigma_p = np.sqrt(probs * (1.0 - probs) / n_kept)
+    with np.errstate(divide='ignore', invalid='ignore'):
+        sigma_Ax = np.where(probs > 0,
+                            norm_Ax * sigma_p / (2.0 * np.sqrt(probs)),
+                            norm_Ax / np.sqrt(n_kept))
+
+    return {'Ax_abs': Ax_abs, 'sigma_Ax': sigma_Ax, 'probs': probs,
+            'p_success': float(p_success), 'norm_Ax': float(norm_Ax),
+            'kept': int(n_kept)}

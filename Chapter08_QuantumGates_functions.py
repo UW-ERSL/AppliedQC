@@ -125,6 +125,55 @@ def UniversalOperator(theta,phi,lambdaAngle):
 
 
 
+
+def _counts_from_pub(pub_result, circuit):
+    """
+    Read measurement counts out of a primitive result, whatever the circuit's
+    classical registers are called.
+
+    The V2 primitives return one BitArray per classical register, reached as
+    ``pub_result.data.<register name>``.  Reading ``.data.c`` unconditionally
+    only works for circuits built as ``QuantumCircuit(n, m)``, whose register
+    Qiskit names 'c'; a circuit that names its register -- or uses several, as
+    the LCU circuits of Chapter 14 do with 'c_anc' and 'c_sys' -- raises
+    AttributeError instead.
+
+    For a single register the counts are returned directly.  For several, the
+    per-shot bitstrings are joined with a space in reverse declaration order,
+    which is the convention Aer's ``get_counts()`` already uses (the register
+    added last appears leftmost).  Hardware counts are then a drop-in
+    replacement for simulator counts, and post-processing that splits the key
+    on whitespace works unchanged for both.
+
+    Parameters
+    ----------
+    pub_result : PubResult
+        Element of the primitive result, i.e. ``job.result()[0]``.
+    circuit : QuantumCircuit
+        The circuit as submitted, read for its classical register names.
+
+    Returns
+    -------
+    dict
+        Measurement outcome -> count.
+    """
+    names = [creg.name for creg in circuit.cregs]
+    if not names:
+        raise ValueError("Circuit has no classical registers to read counts from")
+
+    data = pub_result.data
+    if len(names) == 1:
+        return getattr(data, names[0]).get_counts()
+
+    # Several registers: join per shot, register added last leftmost.
+    per_register = [getattr(data, n).get_bitstrings() for n in names]
+    counts = {}
+    for bits in zip(*per_register):
+        key = ' '.join(reversed(bits))
+        counts[key] = counts.get(key, 0) + 1
+    return counts
+
+
 def findActualHardwareRequirements(circuit, min_num_qubits=15):
     """
     Analyzes the circuit's compatibility and expected performance on hardware.
@@ -141,14 +190,14 @@ def findActualHardwareRequirements(circuit, min_num_qubits=15):
     # 2. Extract key metrics
     gate_counts = isa_circuit.count_ops()
     depth = isa_circuit.depth()
-    
+    n2q = gate_counts.get('cx', 0) + gate_counts.get('ecr', 0) + gate_counts.get('cz', 0)
     
     print(f"--- Hardware Analysis for {backend.name} ---")
     print(f"Number of qubits (on chosen hardware): {isa_circuit.num_qubits}")
     print(f"Original Gate Count: {sum(circuit.count_ops().values())}")
     print(f"Transpiled Gate Count: {sum(gate_counts.values())}")
     print(f"Circuit Depth: {depth}")
-    print(f"Multi-Qubit (CX/ECR) Gates: {gate_counts.get('cx', gate_counts.get('ecr', 0))}")
+    print(f"Multi-Qubit (CX/ECR/CZ) Gates: {n2q}")
     
     # 3. Warning for students
     if depth > 100:
@@ -201,7 +250,7 @@ def runCircuitOnIBMQuantum(circuit,shots=1024,min_num_qubits=15,):
 	sampler.options.twirling.num_randomizations = 32  # Standard for good balance
 	job = sampler.run([isa_circuit],shots = shots)
 	pub_result = job.result()[0]
-	return pub_result.data.c.get_counts()
+	return _counts_from_pub(pub_result, circuit)
 
 def plot_measurement_results(counts, title="Measurement Results", figsize=(10, 6)):
     """
