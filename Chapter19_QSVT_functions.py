@@ -15,11 +15,36 @@ Provides
   for the quantum singular value transformation", arXiv:2507.15537 (2025)).
 * myQSVT : builds the block encoding, computes QSP phase angles, assembles the
   Qiskit QSVT circuit, and post-selects the solution direction.
+
+Note on the ancilla readout
+---------------------------
+The (0,0) block of the QSP unitary is the *complex* polynomial P(x) + i Q(x);
+only Re P is the designed approximation of 1/x, while Im P is the QSP
+completion polynomial, an artefact of unitarity that carries no solution
+information.  Post-selecting the ancilla in the computational |0> basis
+therefore accepts Re P(A)b + i Im P(A)b, so the accepted state is *not*
+proportional to A^-1 b and the accepted probability is
+||Re||^2 + ||Im||^2 rather than ||p(A)b||^2 / tau^2.
+
+This module reads the QSP ancilla out in the |+>/|-> basis instead
+(one Hadamard before the phase sequence and one after), since
+
+    <+| U_Phi |+>  =  Re P  +  i Re(Q) sqrt(1-x^2)
+
+and Re Q vanishes identically for the phase sequences pyqsp returns in the
+'Wx' convention.  The projection onto the real part is then done *by the
+circuit*: no extra qubit, no extra two-qubit gate, and zero extra queries to
+the block encoding.  See Martyn, Rossi, Tan & Chuang, "Grand Unification of
+Quantum Algorithms", PRX Quantum 2, 040203 (2021), Sec. II.
 * run_comprehensive_tests : end-to-end fidelity test suite over several matrices.
+* verify_qsvt : resource-accounting diagnostics (success probability against its
+  bound, real-part extraction, and the subnormalisation factor tau).
 """
 import numpy as np
 import scipy
 import math
+import io
+import contextlib
 from numpy.polynomial import Chebyshev
 from pyqsp.angle_sequence import QuantumSignalProcessingPhases 
 
@@ -233,6 +258,10 @@ class myQSVT:
     Value Transformation, then post-selecting the ancilla to obtain a state
     proportional to A⁻¹|b⟩.
 
+    The QSP ancilla is read out in the |+⟩/|−⟩ basis so that the circuit itself
+    projects onto Re P (the designed polynomial), discarding the QSP completion
+    polynomial Im P.  See the module docstring for why this matters.
+
     Attributes
     ----------
     A : numpy.ndarray
@@ -412,11 +441,19 @@ class myQSVT:
     # ------------------------------------------------------------------
     def construct_qsvt_circuit(self):
         """
-        QSVT sequence: P(phi_0), U_BE, P(phi_1), U_BE, ..., U_BE, P(phi_d)
+        QSVT sequence: H, P(phi_0), U_BE, P(phi_1), U_BE, ..., U_BE, P(phi_d), H
 
         Gate appended as list(q_data) + list(q_anc) so that Qiskit places
         q_anc as the most-significant-bit (MSB) block selector, matching
         the mathematical block-encoding convention.
+
+        The two Hadamards on the ancilla turn the computational-basis
+        post-selection into a |+⟩/|−⟩ measurement, i.e. they make the circuit
+        project onto Re P instead of P = Re P + i Im P.  Without them, the
+        ancilla = |0⟩ branch also carries the QSP completion polynomial Im P,
+        which inflates the measured success probability and leaves a state that
+        is not proportional to A⁻¹|b⟩.  They cost one single-qubit gate each and
+        no additional queries to U_BE; the Rz(-2 phi_k) rotations are untouched.
         """
         q_anc  = QuantumRegister(self.ancilla_qubits, 'anc')
         q_data = QuantumRegister(self.n, 'b')
@@ -429,11 +466,15 @@ class myQSVT:
         U_op   = self.get_block_encoding()
         U_gate = U_op.to_instruction()
 
+        qc.h(q_anc[0])                       # |0> -> |+> : real-part extraction
+
         for i in range(len(self.angles) - 1):
             self._apply_projector_phase(qc, self.angles[i], q_anc[0])
             qc.append(U_gate, list(q_data) + list(q_anc))
 
         self._apply_projector_phase(qc, self.angles[-1], q_anc[0])
+
+        qc.h(q_anc[0])                       # <+| readout on the QSP ancilla
         qc.barrier()
         qc.measure(range(qc.num_qubits), range(qc.num_qubits))
 
@@ -464,35 +505,76 @@ class myQSVT:
     # ------------------------------------------------------------------
     # Solve
     # ------------------------------------------------------------------
-    def solve(self, stateVector=True):
+    def success_probability_bound(self):
+        """
+        Return the exact upper bound on the post-selection success probability.
+
+        With the |+>/|-> readout the accepted branch holds p(A)|b>/tau, so
+
+            P_succ = ||p(A) b||^2 / tau^2  <=  ||A^-1 b||^2 / tau^2
+
+        with equality when p is exact on the spectrum.  A measured P_succ above
+        this value is a red flag: it means the QSP completion polynomial Im P is
+        being counted as success (see the module docstring).  The bound is
+        computed classically and is therefore a diagnostic for the small
+        demonstration systems of this chapter, not part of the algorithm.
+
+        Returns
+        -------
+        float
+            ||A^-1 b||^2 / tau^2.
+        """
+        x = np.linalg.solve(self.A, self.b)
+        return float((np.linalg.norm(x) / self.tau) ** 2)
+
+    def solve(self, stateVector=True, check_bound=True):
         """
         Run QSVT and return the normalised solution direction.
 
-        The QSVT circuit encodes p(A)|b> in the ancilla=0 subspace, where
-        p(x) ~ 1/x.  After post-selection the state is proportional to A^{-1}b.
+        The QSVT circuit encodes p(A)|b> in the accepted ancilla subspace, where
+        p(x) ~ 1/x.  Because the ancilla is read out in the |+>/|-> basis
+        (see :meth:`construct_qsvt_circuit`), that subspace holds the REAL part
+        Re P(A)|b> only, so the accepted state really is proportional to A^{-1}b
+        and the accepted probability really is ||p(A)b||^2 / tau^2.
 
         Statevector index: k = data_idx * 2 + anc_bit
-        Ancilla=0 subspace: sv.data[0::2]  (even indices, correct data order).
-        Solution direction: real part of the extracted amplitudes.
+        Accepted subspace: sv.data[0::2]  (even indices, correct data order).
+
+        Parameters
+        ----------
+        stateVector : bool
+            Exact statevector simulation (default) or shot-based QASM sampling.
+        check_bound : bool
+            Verify P_succ <= ||A^-1 b||^2 / tau^2 and warn if it is violated.
         """
         if not self.dataOK:
             return None
 
         qc = self.construct_qsvt_circuit()
 
-       
         if stateVector:
             print("Running statevector simulation...")
             qc_sv = qc.copy()
             qc_sv.remove_final_measurements()
             sv = Statevector.from_instruction(qc_sv)
 
-            u_qsvt = sv.data[0::2]          # ancilla=0 => even indices
-            success_prob = np.sum(np.abs(u_qsvt)**2)
+            u_qsvt = sv.data[0::2]          # accepted branch => even indices
+            success_prob = float(np.sum(np.abs(u_qsvt) ** 2))
             print(f"Success probability |anc=0>: {success_prob:.6f}")
             if success_prob < 1e-6:
                 print("ERROR: near-zero success probability.")
                 return None
+
+            # The |+>/|-> readout leaves the residual imaginary part
+            # Re(Q) sqrt(1-x^2), which vanishes for pyqsp 'Wx' sequences.  This
+            # is a consistency check on that assumption, NOT a correction: if it
+            # ever fires, the phase convention differs and the readout basis
+            # must be revisited.
+            residual = float(np.max(np.abs(u_qsvt.imag)))
+            if residual > 1e-8:
+                print(f"Warning: residual imaginary amplitude {residual:.2e} "
+                      "-- the |+>/|-> readout did not fully isolate Re P. "
+                      "Check the phase convention of the angle-finding routine.")
         else:
             print("Running QASM simulation...")
             backend = Aer.get_backend('qasm_simulator')
@@ -506,20 +588,39 @@ class myQSVT:
                 print("ERROR: no shots with ancilla=0.")
                 return np.zeros(2**self.n)
 
+            success_prob = total_success / self.nShots
+            print(f"Success probability |anc=0>: {success_prob:.6f}")
+
+            # Shot counts give |amplitude| only; the signs are lost.  This
+            # branch therefore recovers the solution direction up to a sign per
+            # component and is included for illustration only.
             u_qsvt = np.zeros(2**self.n, dtype=complex)
             for bitstr, count in success_counts.items():
                 idx          = int(bitstr[:-1], 2)
                 u_qsvt[idx]  = np.sqrt(count / total_success)
+            residual = 0.0
 
-        # Solution direction is in the REAL PART (imaginary is the QSP completion)
+        info = {}
+        info['qc']              = qc
+        info['success_prob']    = success_prob
+        info['imag_residual']   = residual
+        if check_bound:
+            bound = self.success_probability_bound()
+            info['success_prob_bound'] = bound
+            print(f"Bound ||A^-1 b||^2 / tau^2 : {bound:.6f}  "
+                  f"(ratio {success_prob / bound:.4f})")
+            if success_prob > bound + 1e-9:
+                print("Warning: success probability exceeds its bound. The "
+                      "accepted branch is carrying more than p(A)|b>.")
+
+        # u_qsvt is already real to machine precision; .real only drops the
+        # ~1e-15 numerical residue.  It is a cast, not a correction: deleting it
+        # changes nothing but the dtype.
         u_real = u_qsvt.real
         norm   = np.linalg.norm(u_real)
-        info = {}
-        info['qc'] = qc
-        info['success_prob'] = success_prob if stateVector else total_success / self.nShots
 
         if norm < 1e-12:
-            print("ERROR: real part of extracted state has near-zero norm.")
+            print("ERROR: extracted state has near-zero norm.")
             return None
         return u_real / norm, info
 
@@ -766,7 +867,7 @@ def run_comprehensive_tests():
         
         status = '✓ PASS' if passed else '✗ FAIL'
         print(f"  ε={target_err:5.3f} → Fidelity: {fid:.4f} "
-              f"[{len(solver.angles):2d} angles, depth={solver.angles.__len__() * 2 + 1}] {status}")
+              f"[{len(solver.angles):2d} angles, depth={len(solver.angles) * 2 + 3}] {status}")
     
     # =========================================================================
     # SUMMARY AND STATISTICS
@@ -829,22 +930,247 @@ def run_comprehensive_tests():
     print("="*70)
     print("""
 Performance Notes:
-- Excellent (fidelity > 0.95): κ ≤ 4.5
-- Good (fidelity > 0.90): κ ≤ 6.0  
-- Acceptable (fidelity > 0.85): κ ≤ 7.0
-- Degraded (fidelity < 0.85): κ > 7.0
+Fidelity is governed by the target error passed to the solver, not by the
+condition number: the degree is chosen from (kappa, epsilon) so that the
+approximation error is met, so kappa buys circuit DEPTH rather than costing
+accuracy. Across this suite every case clears 0.99 at epsilon = 0.01.
 
-Known Limitation:
-For highly ill-conditioned systems (κ ≥ 9), polynomial approximation
-degrades significantly. This is expected behavior, not a bug.
-Consider preconditioning or alternative algorithms for such cases.
+What kappa does cost:
+- degree d grows linearly in kappa (Sunderhauf bound), depth = 2d + 3
+- tau grows like kappa, so the post-selection success probability, which
+  scales as 1/tau^2, degrades quadratically in kappa
+
+That second point, not fidelity, is the practical limit for ill-conditioned
+systems: the answer stays accurate, but you wait longer for an accepted shot.
+
+Success-probability accounting:
+solve() reports the measured probability alongside the exact bound
+||A^-1 b||^2 / tau^2. The ratio must not exceed 1. It approaches 1 as the
+polynomial becomes exact on the spectrum, which is the cheapest end-to-end
+check that the |+>/|-> ancilla readout is isolating Re P correctly.
 """)
     
     return all_results
 
+# ==============================================================================
+# Resource-accounting diagnostics
+# ==============================================================================
+#: Systems exercised by :func:`verify_qsvt`, as (A, b, kappa, target_error).
+#: A is pre-scaled so that its largest singular value is just below 1.
+def _verification_cases():
+    """
+    Build the list of systems used by :func:`verify_qsvt`.
+
+    Spans three sizes (2x2, 4x4, 8x8), condition numbers from 1.8 to about 32,
+    and target errors from 5e-2 down to 5e-3, so that the accuracy-dependent
+    diagnostics have a range to move over.
+
+    Returns
+    -------
+    list of dict
+        Each with keys ``'label'``, ``'A'``, ``'b'``, ``'kappa'``, ``'eps'``.
+        ``'label'`` names the system, so that check 2 compares target errors
+        within one system rather than across unrelated systems that happen to
+        share a condition number.
+    """
+    cases = []
+
+    # Diagonal 2x2 systems: sweep kappa and the target error independently.
+    for lam in (0.5, 0.3, 0.2, 0.12):
+        for eps in (0.05, 0.01, 0.005):
+            cases.append({'label': f'2x2 diagonal, kappa={0.9 / lam:.1f}',
+                          'A': np.diag([0.9, lam]),
+                          'b': np.array([1.0, 3.0]),
+                          'kappa': 0.9 / lam, 'eps': eps})
+
+    # The two worked examples of the chapter.
+    A2 = np.array([[2.0, -1.0], [-1.0, 2.0]])
+    A2 = A2 / (1.001 * np.max(np.linalg.eigvalsh(A2)))
+    cases.append({'label': 'Example 19.7 (2x2)', 'A': A2,
+                  'b': np.array([1.0, 1.0]), 'kappa': 3.0, 'eps': 0.01})
+
+    A4 = np.array([[1.0, 0.0, 0.0, -0.5],
+                   [0.0, 1.0, 0.0,  0.0],
+                   [0.0, 0.0, 1.0,  0.0],
+                   [-0.5, 0.0, 0.0, 1.0]])
+    A4 = A4 / (1.001 * np.max(np.linalg.eigvalsh(A4)))
+    cases.append({'label': 'Example 19.8 (4x4)', 'A': A4,
+                  'b': np.array([1.0, 0.0, 0.0, 0.0]), 'kappa': 3.0,
+                  'eps': 0.01})
+
+    # An 8x8 tridiagonal system: kappa ~ 32, degree ~ 261.
+    N  = 8
+    At = (np.diag(np.full(N, 2.0))
+          + np.diag(np.full(N - 1, -1.0), 1)
+          + np.diag(np.full(N - 1, -1.0), -1))
+    At = At / (1.001 * np.max(np.linalg.eigvalsh(At)))
+    cases.append({'label': '8x8 tridiagonal', 'A': At, 'b': np.ones(N),
+                  'kappa': float(np.linalg.cond(At)), 'eps': 0.01})
+
+    return cases
+
+
+def verify_qsvt(cases=None, verbose=True):
+    """
+    Run the resource-accounting diagnostics on the solver.
+
+    Fidelity alone does not catch a mis-accounted QSVT solver: taking the real
+    part of a simulated statevector in post-processing repairs the solution
+    *direction*, so accuracy metrics look fine while the reported success
+    probability is inflated by the QSP completion polynomial.  These five
+    checks target the accounting rather than the accuracy.
+
+    1. **Success probability against its bound.**  The accepted branch holds
+       p(A)b, so P_succ = ||p(A)b||^2 <= ||A^-1 b||^2 / tau^2 exactly.  A ratio
+       above 1 is close to proof that Re and Im are being summed.
+    2. **The bound tightens as the polynomial improves.**  Within one system,
+       the ratio must rise monotonically as the target error falls, since the
+       shortfall *is* the approximation error.  A ratio pinned near 1 at loose
+       epsilon would be as suspicious as one above 1.  (Compared within a
+       system, not merely within a condition number: two different systems at
+       the same kappa have different ||A^-1 b||, so their ratios are not
+       comparable.)
+    3. **No load-bearing real-part extraction.**  With the |+>/|-> readout the
+       accepted amplitudes are real to machine precision, so `.real` in
+       :meth:`myQSVT.solve` is a cast rather than a correction.
+    4. **tau bounds |P| on all of [-1, 1].**  QSVT requires |P(x)| <= 1
+       everywhere on [-1,1], not merely on the spectral region
+       [-1,-a] U [a,1].  For an odd approximation of 1/x the maximum is
+       frequently attained inside the central gap, so evaluating tau on the
+       spectral region alone would understate it and overstate P_succ.
+    5. **tau is resolved finely enough.**  Sampling |P| on a uniform grid
+       under-resolves the peaks of a high-degree polynomial; the solver uses
+       25 points per degree with a cos(pi d / 2 N_s) correction, which must
+       land above the true maximum but not far above it.
+
+    Parameters
+    ----------
+    cases : list of dict, optional
+        Systems as returned by :func:`_verification_cases`.
+    verbose : bool
+        Print the per-case table and the verdicts.
+
+    Returns
+    -------
+    dict
+        Keys ``'passed'`` (bool), ``'checks'`` (per-check bool), and ``'rows'``
+        (one dict per case).
+    """
+    if cases is None:
+        cases = _verification_cases()
+
+    if verbose:
+        print("\n" + "=" * 78)
+        print("RESOURCE-ACCOUNTING DIAGNOSTICS")
+        print("=" * 78)
+        print(f"{'system':<24} {'eps':>6} {'d':>4} {'P_succ':>9} "
+              f"{'bound':>9} {'ratio':>7} {'|Im|res':>9} {'tau/max|P|':>10} "
+              f"{'fidelity':>9}")
+
+    rows = []
+    for case in cases:
+        A, kappa, eps = case['A'], case['kappa'], case['eps']
+        b = case['b'] / np.linalg.norm(case['b'])
+
+        # The solver and solve() are chatty; the table below is the output.
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            solver  = myQSVT(A, b, kappa=kappa, target_error=eps)
+            u, info = solver.solve()
+
+        x_exact  = np.linalg.solve(A, b)
+        x_exact /= np.linalg.norm(x_exact)
+        fidelity = float(np.abs(np.vdot(u, x_exact)) ** 2)
+        ratio    = info['success_prob'] / info['success_prob_bound']
+
+        # Reference maxima of the *unnormalised* polynomial, on the full
+        # interval and on the spectral region only.
+        a       = 1.0 / kappa
+        p       = SunderhaufPolynomial.poly(solver.degree, a)
+        xs_full = np.linspace(-1.0, 1.0, 200001)
+        xs_spec = np.concatenate([np.linspace(-1.0, -a, 100001),
+                                  np.linspace(a, 1.0, 100001)])
+        max_full = float(np.max(np.abs(p(xs_full))))
+        max_spec = float(np.max(np.abs(p(xs_spec))))
+
+        rows.append({
+            'label': case['label'], 'n': solver.n, 'kappa': kappa,
+            'eps': eps, 'degree': solver.degree,
+            'p_succ': info['success_prob'], 'bound': info['success_prob_bound'],
+            'ratio': ratio, 'imag_residual': info['imag_residual'],
+            'tau': solver.tau, 'max_full': max_full, 'max_spec': max_spec,
+            'fidelity': fidelity,
+        })
+
+        if verbose:
+            print(f"{case['label']:<24} {eps:6.3f} {solver.degree:4d} "
+                  f"{info['success_prob']:9.6f} {info['success_prob_bound']:9.6f} "
+                  f"{ratio:7.4f} {info['imag_residual']:9.1e} "
+                  f"{solver.tau / max_full:10.4f} {fidelity:9.6f}")
+
+    # -- 1. success probability respects its bound -------------------------
+    worst_ratio = max(r['ratio'] for r in rows)
+    c1 = worst_ratio <= 1.0 + 1e-9
+
+    # -- 2. the ratio tightens as the target error falls -------------------
+    c2, n_compared = True, 0
+    groups = {}
+    for r in rows:
+        groups.setdefault(r['label'], []).append(r)
+    for grp in groups.values():
+        grp = sorted(grp, key=lambda r: -r['eps'])     # loosest epsilon first
+        seq = [r['ratio'] for r in grp]
+        if len(seq) < 2:
+            continue                                   # nothing to compare
+        n_compared += 1
+        if any(b_ < a_ - 1e-6 for a_, b_ in zip(seq, seq[1:])):
+            c2 = False
+
+    # -- 3. no load-bearing .real ------------------------------------------
+    worst_res = max(r['imag_residual'] for r in rows)
+    c3 = worst_res < 1e-10
+
+    # -- 4. tau bounds |P| on all of [-1,1] --------------------------------
+    c4 = all(r['tau'] >= r['max_full'] - 1e-9 for r in rows)
+    gap_binds = sum(1 for r in rows if r['max_full'] > r['max_spec'] * (1 + 1e-6))
+
+    # -- 5. tau is resolved, and only slightly conservative -----------------
+    over = [r['tau'] / r['max_full'] - 1.0 for r in rows]
+    c5 = all(0.0 <= o <= 0.02 for o in over)
+
+    checks = {'bound': c1, 'tightening': c2, 'real_extraction': c3,
+              'tau_domain': c4, 'tau_resolution': c5}
+    passed = all(checks.values())
+
+    if verbose:
+        n = len(rows)
+        verdicts = [
+            (c1, "success probability respects its bound",
+                 f"max ratio {worst_ratio:.5f} over {n} cases"),
+            (c2, "ratio tightens as epsilon falls",
+                 f"monotonic in all {n_compared} swept systems"),
+            (c3, "real part extracted by the circuit, not in software",
+                 f"max residual |Im| = {worst_res:.1e}"),
+            (c4, "tau bounds |P| on all of [-1,1]",
+                 f"holds in {n}/{n}; central gap binds in {gap_binds}/{n}"),
+            (c5, "tau resolved finely enough",
+                 f"conservative by {100 * min(over):.2f}-{100 * max(over):.2f}%"),
+        ]
+        print()
+        for i, (ok, what, detail) in enumerate(verdicts, start=1):
+            print(f"[{i}] {what:<52} {'PASS' if ok else 'FAIL'}")
+            print(f"    {detail}")
+        print()
+        print("ALL CHECKS PASSED" if passed else "SOME CHECKS FAILED")
+        print("=" * 78)
+
+    return {'passed': passed, 'checks': checks, 'rows': rows}
+
+
 if __name__ == "__main__":
     # You can run individual examples or the full test suite
     run_individual_example = False  # Set to True to run single example
+    run_verification       = True   # Set to False to skip the diagnostics
     
     if run_individual_example:
         # Single example mode
@@ -891,3 +1217,8 @@ if __name__ == "__main__":
     else:
         # Run comprehensive test suite
         results = run_comprehensive_tests()
+
+    # The fidelity suite above measures accuracy; the diagnostics below measure
+    # resource accounting, which fidelity alone cannot catch.
+    if run_verification:
+        verification = verify_qsvt()
